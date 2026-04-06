@@ -1,7 +1,7 @@
 # Snyk Branch Cleanup — Caller Workflow
 # Triggers when a branch is deleted and calls the centralized cleanup workflow.
 
-name: "Snyk Cleanup on Branch Delete"
+name: "Snyk Cleanup - Branch Delete"
 
 on:
   delete:

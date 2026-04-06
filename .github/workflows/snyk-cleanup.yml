@@ -1,0 +1,22 @@
+# Snyk Branch Cleanup — Caller Workflow
+# Triggers when a branch is deleted and calls the centralized cleanup workflow.
+
+name: "Snyk Cleanup on Branch Delete"
+
+on:
+  delete:
+
+permissions:
+  contents: read
+
+jobs:
+  snyk-cleanup:
+    # Only trigger for branch deletions, not tag deletions
+    if: github.event.ref_type == 'branch'
+    uses: dhivagar29/.github/.github/workflows/snyk-cleanup-reusable.yml@main
+    with:
+      deleted_branch: ${{ github.event.ref }}
+      repo_name: ${{ github.repository }}
+    secrets:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}

@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src https://api.github.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Stale Branch Cleaner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   EDIT ME — protected branches that can NEVER be deleted.
+   (Matched case-insensitively. The repo's default branch is
+   also auto-detected from the API and always protected.)
+   These are mirrored in JS below as PROTECTED_BRANCHES.
+   ============================================================ */
+
+:root{
+  --bg:#091022;
+  --panel:#0f1d3d;
+  --panel-2:#17284c;
+  --line:#293c64;
+  --line-soft:#1c2c4d;
+  --txt:#dde6f5;
+  --txt-dim:#93a2c2;
+  --txt-faint:#5f6f90;
+  --amber:#fe3842;
+  --amber-soft:#371016;
+  --red:#fe3842;
+  --red-soft:#3a1117;
+  --green:#3fb950;
+  --green-soft:#0e2c1c;
+  --cyan:#5b9dff;
+  --cyan-soft:#13294f;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--sans);
+  background:
+    radial-gradient(1200px 600px at 80% -10%, #16284f 0%, transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, #2a0e15 0%, transparent 55%),
+    var(--bg);
+  background-attachment:fixed;
+  color:var(--txt);
+  line-height:1.5;
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(var(--line-soft) 1px,transparent 1px),
+    linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);
+  background-size:42px 42px;
+  opacity:.18;
+  mask-image:radial-gradient(circle at 50% 30%,#000 0%,transparent 80%);
+}
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:32px 22px 140px}
+
+/* ---------- header ---------- */
+header{
+  display:flex;align-items:flex-end;justify-content:space-between;
+  gap:20px;flex-wrap:wrap;
+  border-bottom:1px solid var(--line);
+  padding-bottom:20px;margin-bottom:26px;
+}
+.brand{display:flex;flex-direction:column;gap:6px}
+.eyebrow{
+  font-family:var(--mono);font-size:11px;letter-spacing:.32em;
+  text-transform:uppercase;color:var(--amber);font-weight:600;
+  display:flex;align-items:center;gap:9px;
+}
+.eyebrow::before{content:"";width:30px;height:1px;background:var(--amber)}
+h1{
+  font-family:var(--mono);font-weight:700;font-size:clamp(26px,4vw,40px);
+  margin:0;letter-spacing:-.01em;line-height:1.02;
+}
+h1 .slash{color:var(--amber)}
+.tagline{color:var(--txt-dim);font-size:13.5px;max-width:46ch}
+.ratebox{
+  font-family:var(--mono);font-size:11.5px;color:var(--txt-dim);
+  border:1px solid var(--line);border-radius:10px;padding:11px 14px;
+  background:rgba(20,26,34,.6);min-width:188px;
+}
+.ratebox .rl-row{display:flex;justify-content:space-between;gap:14px;padding:2px 0}
+.ratebox b{color:var(--txt);font-weight:600}
+#whoami{color:var(--green)}
+
+/* ---------- panels ---------- */
+.panel{
+  background:linear-gradient(180deg,var(--panel) 0%,#11161d 100%);
+  border:1px solid var(--line);border-radius:14px;
+  padding:22px;margin-bottom:20px;
+  box-shadow:0 18px 40px -28px rgba(0,0,0,.9);
+}
+.panel-title{
+  font-family:var(--mono);font-size:12px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--txt-dim);font-weight:600;
+  margin:0 0 16px;display:flex;align-items:center;gap:10px;
+}
+.panel-title .num{
+  width:22px;height:22px;display:grid;place-items:center;
+  border:1px solid var(--line);border-radius:6px;color:var(--amber);
+  font-size:11px;background:var(--amber-soft);
+}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+
+label.field{display:block}
+.lbl{
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--txt-dim);
+  margin-bottom:7px;display:flex;align-items:center;gap:8px;
+}
+input[type=password],input[type=text],input[type=number],textarea{
+  width:100%;background:#0b0f15;border:1px solid var(--line);
+  color:var(--txt);font-family:var(--mono);font-size:13.5px;
+  padding:11px 13px;border-radius:9px;outline:none;
+  transition:border-color .15s,box-shadow .15s;resize:vertical;
+}
+input:focus,textarea:focus{border-color:var(--amber);box-shadow:0 0 0 3px var(--amber-soft)}
+textarea{min-height:104px;line-height:1.65}
+.hint{font-size:11.5px;color:var(--txt-faint);margin-top:7px;font-family:var(--mono)}
+.hint code{color:var(--amber);background:var(--amber-soft);padding:1px 5px;border-radius:4px}
+
+.row-end{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-top:18px}
+.age-field{width:150px}
+
+/* ---------- buttons ---------- */
+button{
+  font-family:var(--mono);font-weight:600;font-size:13px;letter-spacing:.04em;
+  border:1px solid var(--line);border-radius:9px;cursor:pointer;
+  padding:12px 20px;color:var(--txt);background:var(--panel-2);
+  transition:transform .08s,background .15s,border-color .15s,opacity .15s;
+}
+button:hover:not(:disabled){border-color:var(--amber);background:#222c38}
+button:active:not(:disabled){transform:translateY(1px)}
+button:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:var(--amber);color:#fff;border-color:var(--amber)}
+.btn-primary:hover:not(:disabled){background:#ff525b;border-color:#ff525b}
+.btn-danger{background:var(--red);color:#fff;border-color:var(--red)}
+.btn-danger:hover:not(:disabled){background:#ff525b;border-color:#ff525b}
+.btn-ghost{background:transparent}
+
+/* ---------- log ---------- */
+#log{
+  font-family:var(--mono);font-size:12px;color:var(--txt-dim);
+  background:#080b10;border:1px solid var(--line-soft);border-radius:9px;
+  padding:12px 14px;max-height:150px;overflow:auto;margin-top:16px;display:none;
+}
+#log .l{padding:1px 0;white-space:pre-wrap}
+#log .l.err{color:var(--red)}
+#log .l.ok{color:var(--green)}
+#log .l.warn{color:var(--amber)}
+
+/* ---------- results ---------- */
+#results{display:none}
+.repo-block{margin-bottom:24px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)}
+.repo-head{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  flex-wrap:wrap;padding:14px 18px;background:var(--panel-2);
+  border-bottom:1px solid var(--line);
+}
+.repo-name{font-family:var(--mono);font-weight:600;font-size:15px}
+.repo-name .owner{color:var(--txt-dim)}
+.repo-meta{display:flex;gap:10px;flex-wrap:wrap}
+.chip{
+  font-family:var(--mono);font-size:11px;padding:4px 9px;border-radius:20px;
+  border:1px solid var(--line);color:var(--txt-dim);
+}
+.chip.def{color:var(--cyan);border-color:#234a78;background:var(--cyan-soft)}
+.chip.stale{color:var(--amber);border-color:#5a4410;background:var(--amber-soft)}
+.chip.mine{color:var(--green);border-color:#1e5a32;background:var(--green-soft)}
+
+.repo-toolbar{display:flex;gap:8px;padding:10px 18px;border-bottom:1px solid var(--line-soft);background:#0e131a}
+.repo-toolbar button{padding:7px 13px;font-size:11.5px}
+
+.tbl-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--txt-faint);text-align:left;font-weight:600;
+  padding:11px 14px;border-bottom:1px solid var(--line);white-space:nowrap;
+}
+td{padding:11px 14px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr.row-mine:hover{background:rgba(63,185,80,.04)}
+.bname{font-family:var(--mono);font-weight:500;color:var(--txt);word-break:break-all}
+.b-age{font-family:var(--mono);color:var(--txt-dim);white-space:nowrap}
+.b-age.old{color:var(--amber)}
+.b-date{font-family:var(--mono);font-size:12px;color:var(--txt-dim);white-space:nowrap}
+.b-author{font-size:12px;color:var(--txt-dim)}
+.tag{font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:5px;white-space:nowrap}
+.tag.protected{color:var(--cyan);background:var(--cyan-soft);border:1px solid #234a78}
+.tag.notyours{color:var(--txt-faint);background:#161c24;border:1px solid var(--line)}
+.tag.yours{color:var(--green);background:var(--green-soft);border:1px solid #1e5a32}
+.tag.merged{color:var(--green)}
+.tag.unmerged{color:var(--amber)}
+.tag.unknown{color:var(--txt-faint)}
+.b-status{font-family:var(--mono);font-size:11.5px;white-space:nowrap}
+.b-status.ok{color:var(--green)}
+.b-status.err{color:var(--red)}
+.b-status.pending{color:var(--amber)}
+
+input[type=checkbox]{
+  width:17px;height:17px;accent-color:var(--amber);cursor:pointer;
+}
+input[type=checkbox]:disabled{cursor:not-allowed;opacity:.35}
+
+.empty-repo{padding:20px 18px;color:var(--txt-faint);font-family:var(--mono);font-size:12.5px}
+
+/* ---------- sticky action bar ---------- */
+#actionbar{
+  position:fixed;left:0;right:0;bottom:0;z-index:40;
+  display:none;align-items:center;justify-content:space-between;gap:16px;
+  padding:14px 22px;
+  background:
+    repeating-linear-gradient(45deg,#2a0e15 0 18px,#0c1429 18px 36px);
+  border-top:2px solid var(--amber);
+  box-shadow:0 -16px 40px -20px rgba(0,0,0,.95);
+}
+#actionbar .inner{max-width:1180px;margin:0 auto;width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.selsummary{font-family:var(--mono);font-size:13px;color:var(--txt)}
+.selsummary b{color:var(--amber);font-size:16px}
+.selsummary .sub{display:block;color:var(--txt-faint);font-size:11px;margin-top:2px}
+
+/* ---------- modal ---------- */
+.modal-bg{
+  position:fixed;inset:0;z-index:60;display:none;
+  background:rgba(4,6,9,.82);backdrop-filter:blur(3px);
+  align-items:center;justify-content:center;padding:22px;
+}
+.modal{
+  background:var(--panel);border:1px solid var(--red);border-radius:16px;
+  max-width:560px;width:100%;max-height:84vh;display:flex;flex-direction:column;
+  box-shadow:0 30px 80px -20px rgba(0,0,0,.9);overflow:hidden;
+}
+.modal-head{padding:20px 22px 16px;border-bottom:1px solid var(--line)}
+.modal-head .mtitle{font-family:var(--mono);font-weight:700;font-size:18px;color:var(--red);display:flex;align-items:center;gap:10px}
+.modal-head p{margin:10px 0 0;color:var(--txt-dim);font-size:13px}
+.modal-list{overflow:auto;padding:8px 22px;flex:1}
+.modal-list .mrepo{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-faint);margin:12px 0 6px}
+.modal-list .mb{font-family:var(--mono);font-size:12.5px;color:var(--txt);padding:3px 0 3px 14px;border-left:2px solid var(--red-soft)}
+.modal-foot{padding:18px 22px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:14px}
+.confirm-type .lbl{margin-bottom:6px}
+.confirm-type code{color:var(--red)}
+.modal-actions{display:flex;gap:12px;justify-content:flex-end}
+@media(max-width:520px){.modal-actions{flex-direction:column-reverse}.modal-actions button{width:100%}}
+
+.banner{
+  font-family:var(--mono);font-size:12px;border-radius:9px;padding:11px 14px;margin-top:14px;display:none;
+}
+.banner.show{display:block}
+.banner.error{color:var(--red);background:var(--red-soft);border:1px solid #5a2420}
+.banner.info{color:var(--cyan);background:var(--cyan-soft);border:1px solid #234a78}
+
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--amber);border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+.foot-note{font-family:var(--mono);font-size:11px;color:var(--txt-faint);text-align:center;margin-top:30px;line-height:1.8}
+.foot-note .dot{color:var(--amber)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <h1>Stale Branch Cleaner</h1>
+      <div class="tagline">Scan your repos, preview branches you own that have gone cold, and delete them in bulk. Nothing leaves your browser. Nothing deletes without a preview.</div>
+    </div>
+    <div class="ratebox">
+      <div class="rl-row"><span>Signed in</span><b id="whoami">&mdash;</b></div>
+      <div class="rl-row"><span>REST quota</span><b id="rl-rest">&mdash;</b></div>
+      <div class="rl-row"><span>GraphQL quota</span><b id="rl-gql">&mdash;</b></div>
+      <div class="rl-row"><span>Resets</span><b id="rl-reset">&mdash;</b></div>
+    </div>
+  </header>
+
+  <!-- ============ CONFIG ============ -->
+  <div class="panel">
+    <div class="panel-title"><span class="num">1</span> Connect &amp; configure</div>
+    <div class="grid">
+      <label class="field">
+        <span class="lbl">GitHub Personal Access Token</span>
+        <input type="password" id="pat" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false">
+        <div class="hint">Held in memory only &middot; never stored, logged, or sent anywhere but <code>api.github.com</code>. Needs <code>Contents: Read &amp; write</code> (fine-grained) or the <code>repo</code> scope (classic) — deleting a branch requires push access.</div>
+      </label>
+      <label class="field">
+        <span class="lbl">Repositories &middot; one <code>owner/repo</code> per line</span>
+        <textarea id="repos" placeholder="my-org/service-api&#10;my-org/lambda-jobs&#10;my-org/infra-terraform" spellcheck="false"></textarea>
+      </label>
+    </div>
+    <div class="row-end">
+      <label class="field age-field">
+        <span class="lbl">Stale after (months)</span>
+        <input type="number" id="age" value="6" min="0" step="1">
+      </label>
+      <label class="field" style="display:flex;align-items:center;gap:9px;padding-bottom:11px">
+        <input type="checkbox" id="showOthers">
+        <span class="lbl" style="margin:0">Show branches owned by others (read-only)</span>
+      </label>
+      <button class="btn-primary" id="loadBtn">▸ Load branches</button>
+      <button class="btn-ghost" id="clearBtn">Reset</button>
+    </div>
+    <div class="banner" id="topBanner"></div>
+    <div id="log"></div>
+  </div>
+
+  <!-- ============ RESULTS ============ -->
+  <div id="results"></div>
+
+  <div class="foot-note">
+    <span class="dot">●</span> Runs entirely client-side &middot; open this file from your own machine
+    <br>Default branch + protected branches are locked &middot; only branches whose latest commit is authored by you can be deleted
+  </div>
+</div>
+
+<!-- ============ STICKY ACTION BAR ============ -->
+<div id="actionbar">
+  <div class="inner">
+    <div class="selsummary">
+      <b id="selCount">0</b> branch(es) selected for deletion
+      <span class="sub">All selections are yours, stale-eligible, and unprotected.</span>
+    </div>
+    <button class="btn-danger" id="deleteBtn" disabled>✕ Delete selected…</button>
+  </div>
+</div>
+
+<!-- ============ CONFIRM MODAL ============ -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="mtitle">⚠ Confirm permanent deletion</div>
+      <p>You are about to delete <b id="mCount" style="color:var(--red)">0</b> branch(es). This cannot be undone from here. Review the full list:</p>
+    </div>
+    <div class="modal-list" id="modalList"></div>
+    <div class="modal-foot">
+      <label class="confirm-type field">
+        <span class="lbl">Type <code>DELETE</code> to arm the button</span>
+        <input type="text" id="confirmType" placeholder="DELETE" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="cancelBtn">Cancel</button>
+        <button class="btn-danger" id="confirmBtn" disabled>✕ Delete these branches</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   PROTECTED_BRANCHES — EDIT ME.
+   These branch names can never be selected or deleted, in any
+   repo, under any code path (matched case-insensitively).
+   The repo's own default branch is auto-detected and added
+   to this set per repo as well.
+   ============================================================ */
+const PROTECTED_BRANCHES = ["master","development","development_2","test","test_2"];
+
+const API = "https://api.github.com";
+const PROTECTED = new Set(PROTECTED_BRANCHES.map(b => b.toLowerCase()));
+const MS_PER_MONTH = 1000 * 60 * 60 * 24 * 30.44;
+
+// ---- in-memory state (never persisted) ----
+let PAT = "";
+let ME = { login: null, name: null, emails: [] };
+let SCAN = [];          // [{owner, repo, defaultBranch, branches:[...]}]
+let DELETING = false;
+
+// ---- element refs ----
+const $ = id => document.getElementById(id);
+const els = {
+  pat:$("pat"), repos:$("repos"), age:$("age"), showOthers:$("showOthers"),
+  loadBtn:$("loadBtn"), clearBtn:$("clearBtn"), results:$("results"),
+  log:$("log"), topBanner:$("topBanner"),
+  actionbar:$("actionbar"), selCount:$("selCount"), deleteBtn:$("deleteBtn"),
+  modalBg:$("modalBg"), modalList:$("modalList"), mCount:$("mCount"),
+  confirmType:$("confirmType"), confirmBtn:$("confirmBtn"),
+  cancelBtn:$("cancelBtn"),
+  whoami:$("whoami"), rlRest:$("rl-rest"), rlGql:$("rl-gql"), rlReset:$("rl-reset")
+};
+
+// =================== helpers ===================
+function log(msg, cls){
+  els.log.style.display="block";
+  const d=document.createElement("div");
+  d.className="l"+(cls?" "+cls:"");
+  d.textContent=msg;
+  els.log.appendChild(d);
+  els.log.scrollTop=els.log.scrollHeight;
+}
+function banner(msg, type){
+  els.topBanner.textContent=msg;
+  els.topBanner.className="banner show "+(type||"info");
+}
+function clearBanner(){ els.topBanner.className="banner"; }
+function esc(s){ return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function fmtAge(date){
+  const months=(Date.now()-date.getTime())/MS_PER_MONTH;
+  if(months<1){ const days=Math.max(0,Math.round((Date.now()-date.getTime())/86400000)); return days+"d"; }
+  if(months<12) return Math.round(months)+"mo";
+  return (months/12).toFixed(1)+"y";
+}
+function fmtDate(date){ return date.toISOString().slice(0,10); }
+function resetTime(epochSec){
+  if(!epochSec) return "—";
+  const d=new Date(epochSec*1000);
+  return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+}
+
+// ---- rate-limit surfacing ----
+let rlState={restRemaining:null,restReset:null,gqlRemaining:null,gqlReset:null};
+function updateRestRL(headers){
+  const rem=headers.get("x-ratelimit-remaining");
+  const rst=headers.get("x-ratelimit-reset");
+  if(rem!==null){ rlState.restRemaining=Number(rem); els.rlRest.textContent=rem; }
+  if(rst!==null){ rlState.restReset=Number(rst); els.rlReset.textContent=resetTime(Number(rst)); }
+}
+function updateGqlRL(rl){
+  if(!rl) return;
+  rlState.gqlRemaining=rl.remaining;
+  els.rlGql.textContent=rl.remaining;
+  if(rl.resetAt){ els.rlReset.textContent=new Date(rl.resetAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); }
+}
+
+// ---- fetch wrappers ----
+async function ghREST(path, opts={}){
+  const res=await fetch(API+path, {
+    ...opts,
+    headers:{
+      "Authorization":"Bearer "+PAT,
+      "Accept":"application/vnd.github+json",
+      "X-GitHub-Api-Version":"2022-11-28",
+      ...(opts.headers||{})
+    }
+  });
+  updateRestRL(res.headers);
+  return res;
+}
+async function ghGraphQL(query, variables){
+  const res=await fetch(API+"/graphql",{
+    method:"POST",
+    headers:{
+      "Authorization":"Bearer "+PAT,
+      "Content-Type":"application/json"
+    },
+    body:JSON.stringify({query, variables})
+  });
+  updateRestRL(res.headers);
+  if(res.status===401) throw {code:401};
+  const data=await res.json().catch(()=>({}));
+  if(data && data.data && data.data.rateLimit) updateGqlRL(data.data.rateLimit);
+  if(data.errors && (!data.data || !data.data.repository)) throw {code:"gql", errors:data.errors};
+  return data;
+}
+
+// ---- concurrency pool ----
+async function runPool(items, limit, worker){
+  const queue=items.slice();
+  const runners=Array.from({length:Math.min(limit,queue.length)},async()=>{
+    while(queue.length){
+      const item=queue.shift();
+      try{ await worker(item); }catch(e){ /* worker handles its own errors */ }
+    }
+  });
+  await Promise.all(runners);
+}
+
+// =================== identity ===================
+async function loadMe(){
+  const res=await ghREST("/user");
+  if(res.status===401) throw {code:401};
+  if(!res.ok) throw {code:res.status, msg:"Could not read your account ("+res.status+")."};
+  const u=await res.json();
+  ME.login=u.login; ME.name=u.name||null;
+  ME.emails=[];
+  if(u.email) ME.emails.push(u.email.toLowerCase());
+  // best-effort: private/verified emails (needs user:email scope; ignore if denied)
+  try{
+    const er=await ghREST("/user/emails");
+    if(er.ok){
+      const arr=await er.json();
+      arr.forEach(e=>{ if(e.email) ME.emails.push(e.email.toLowerCase()); });
+    }
+  }catch(_){}
+  els.whoami.textContent="@"+ME.login;
+  log("Authenticated as @"+ME.login+(ME.name?(" ("+ME.name+")"):""), "ok");
+}
+
+// ---- ownership decision ----
+function ownership(author){
+  if(!author) return "unknown";
+  const login=author.user && author.user.login;
+  if(login && ME.login && login.toLowerCase()===ME.login.toLowerCase()) return "you";
+  if(login) return "other"; // linked to a different GitHub user
+  // no linked user — fall back to email / name heuristics
+  const email=(author.email||"").toLowerCase();
+  if(email && ME.emails.includes(email)) return "you";
+  if(ME.name && author.name && author.name.toLowerCase()===ME.name.toLowerCase()) return "you";
+  return "unknown";
+}
+
+// =================== scanning ===================
+const GQL_BRANCHES=`
+query($owner:String!,$name:String!,$cursor:String){
+  rateLimit{ remaining resetAt }
+  repository(owner:$owner,name:$name){
+    defaultBranchRef{ name }
+    refs(refPrefix:"refs/heads/", first:100, after:$cursor){
+      pageInfo{ hasNextPage endCursor }
+      nodes{
+        name
+        target{
+          __typename
+          ... on Commit{
+            committedDate
+            author{ name email user{ login } }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+async function scanRepoGraphQL(owner, name){
+  let cursor=null, defaultBranch=null;
+  const branches=[];
+  do{
+    const data=await ghGraphQL(GQL_BRANCHES, {owner, name, cursor});
+    const repo=data.data && data.data.repository;
+    if(!repo) throw {code:"norepo"};
+    defaultBranch=repo.defaultBranchRef ? repo.defaultBranchRef.name : null;
+    const refs=repo.refs;
+    refs.nodes.forEach(n=>{
+      const t=n.target;
+      const date=(t && t.committedDate)?new Date(t.committedDate):null;
+      const author=(t && t.author)?t.author:null;
+      branches.push({ name:n.name, date, author });
+    });
+    cursor = refs.pageInfo.hasNextPage ? refs.pageInfo.endCursor : null;
+  }while(cursor);
+  return {defaultBranch, branches};
+}
+
+// REST fallback (per-branch date lookup)
+async function scanRepoREST(owner, name){
+  // default branch
+  const r=await ghREST(`/repos/${owner}/${name}`);
+  if(r.status===404) throw {code:404};
+  if(!r.ok) throw {code:r.status};
+  const meta=await r.json();
+  const defaultBranch=meta.default_branch;
+  // list branches (paginated)
+  const list=[];
+  let page=1;
+  while(true){
+    const br=await ghREST(`/repos/${owner}/${name}/branches?per_page=100&page=${page}`);
+    if(!br.ok) throw {code:br.status};
+    const arr=await br.json();
+    arr.forEach(b=>list.push(b.name));
+    if(arr.length<100) break;
+    page++;
+  }
+  const branches=[];
+  await runPool(list, 6, async bn=>{
+    const d=await ghREST(`/repos/${owner}/${name}/branches/${encodeURIComponent(bn)}`);
+    if(!d.ok){ branches.push({name:bn,date:null,author:null}); return; }
+    const j=await d.json();
+    const c=j.commit && j.commit.commit;
+    const date=c && c.author && c.author.date ? new Date(c.author.date) : null;
+    const ghUser=j.commit && j.commit.author ? {login:j.commit.author.login} : null;
+    const author=c && c.author ? {name:c.author.name,email:c.author.email,user:ghUser} : null;
+    branches.push({name:bn,date,author});
+  });
+  return {defaultBranch, branches};
+}
+
+// merged-into-default, best-effort, concurrency limited
+async function fillMergedStatus(owner, name, defaultBranch, branches){
+  const targets=branches.filter(b=>b.name!==defaultBranch);
+  await runPool(targets, 5, async b=>{
+    try{
+      const res=await ghREST(`/repos/${owner}/${name}/compare/${encodeURIComponent(defaultBranch)}...${encodeURIComponent(b.name)}?per_page=1`);
+      if(!res.ok){ b.merged="unknown"; return; }
+      const j=await res.json();
+      b.merged = (j.ahead_by===0) ? "merged" : "unmerged";
+    }catch(_){ b.merged="unknown"; }
+    const cell=document.querySelector(`[data-merged="${cssId(owner,name,b.name)}"]`);
+    if(cell) cell.innerHTML=mergedTag(b.merged);
+  });
+}
+
+function cssId(owner,name,branch){ return btoa(unescape(encodeURIComponent(owner+"/"+name+"#"+branch))).replace(/=/g,""); }
+function mergedTag(m){
+  if(m==="merged") return '<span class="tag merged">✓ merged</span>';
+  if(m==="unmerged") return '<span class="tag unmerged">● unmerged</span>';
+  return '<span class="tag unknown">—</span>';
+}
+
+// =================== main load ===================
+async function loadBranches(){
+  if(DELETING) return;
+  clearBanner();
+  els.log.innerHTML=""; els.log.style.display="none";
+  PAT=els.pat.value.trim();
+  if(!PAT){ banner("Enter a Personal Access Token first.","error"); return; }
+
+  const repoLines=els.repos.value.split("\n").map(s=>s.trim()).filter(Boolean);
+  if(!repoLines.length){ banner("Add at least one owner/repo line.","error"); return; }
+
+  const ageMonths=Math.max(0, Number(els.age.value)||0);
+  const threshold=Date.now()-ageMonths*MS_PER_MONTH;
+
+  els.loadBtn.disabled=true;
+  els.loadBtn.innerHTML='<span class="spin"></span> Loading…';
+  els.results.style.display="none";
+  els.results.innerHTML="";
+  els.actionbar.style.display="none";
+  SCAN=[];
+
+  try{
+    await loadMe();
+  }catch(e){
+    failAuth(e);
+    return resetLoadBtn();
+  }
+
+  let useGraphQL=true;
+  for(const line of repoLines){
+    const m=line.match(/^([^/\s]+)\/([^/\s]+)$/);
+    if(!m){ log("Skipping malformed entry: "+line,"warn"); continue; }
+    const owner=m[1], name=m[2];
+    log("Scanning "+owner+"/"+name+" …");
+    let result=null;
+    if(useGraphQL){
+      try{
+        result=await scanRepoGraphQL(owner,name);
+      }catch(e){
+        if(e.code===401){ failAuth(e); return resetLoadBtn(); }
+        if(e.code==="gql"){
+          log("GraphQL unavailable for this token — falling back to REST.","warn");
+          useGraphQL=false;
+        }else if(e.code==="norepo"){
+          log("✗ "+owner+"/"+name+": not found or no access.","err"); continue;
+        }
+      }
+    }
+    if(!result){
+      try{
+        result=await scanRepoREST(owner,name);
+      }catch(e){
+        if(e.code===401){ failAuth(e); return resetLoadBtn(); }
+        if(e.code===404){ log("✗ "+owner+"/"+name+": not found or no access (404).","err"); }
+        else if(e.code===403){ log("✗ "+owner+"/"+name+": forbidden / rate-limited (403).","err"); }
+        else{ log("✗ "+owner+"/"+name+": error "+(e.code||"?")+".","err"); }
+        continue;
+      }
+    }
+
+    // annotate
+    const def=(result.defaultBranch||"").toLowerCase();
+    result.branches.forEach(b=>{
+      const low=b.name.toLowerCase();
+      b.isDefault = low===def;
+      b.isProtected = PROTECTED.has(low) || b.isDefault;
+      b.own = ownership(b.author);
+      b.isMine = b.own==="you";
+      b.stale = b.date ? (b.date.getTime() < threshold) : false;
+      b.eligible = b.isMine && !b.isProtected; // deletable at all
+      b.merged="pending";
+    });
+    SCAN.push({owner, repo:name, defaultBranch:result.defaultBranch, branches:result.branches});
+    log("✓ "+owner+"/"+name+": "+result.branches.length+" branches","ok");
+
+    if(rlState.restRemaining!==null && rlState.restRemaining<=2){
+      banner("GitHub REST rate limit nearly exhausted — stopping scan. Resets at "+resetTime(rlState.restReset)+".","error");
+      break;
+    }
+  }
+
+  renderResults(ageMonths);
+  resetLoadBtn();
+
+  // merged status, best-effort, after render
+  for(const r of SCAN){
+    fillMergedStatus(r.owner, r.repo, r.defaultBranch, r.branches);
+  }
+}
+
+function failAuth(e){
+  if(e.code===401) banner("Token rejected (401). Check the PAT is valid and not expired.","error");
+  else banner(e.msg||("Request failed ("+(e.code||"?")+").") ,"error");
+}
+function resetLoadBtn(){
+  els.loadBtn.disabled=false;
+  els.loadBtn.innerHTML="▸ Load branches";
+}
+
+// =================== rendering ===================
+function renderResults(ageMonths){
+  els.results.innerHTML="";
+  const showOthers=els.showOthers.checked;
+  let anyVisible=false, totalMine=0, totalStaleMine=0;
+
+  SCAN.forEach(r=>{
+    let rows=r.branches.slice().sort((a,b)=>{
+      // mine+stale first, then by oldest
+      const am=(a.eligible?0:1), bm=(b.eligible?0:1);
+      if(am!==bm) return am-bm;
+      const ad=a.date?a.date.getTime():Infinity, bd=b.date?b.date.getTime():Infinity;
+      return ad-bd;
+    });
+    if(!showOthers) rows=rows.filter(b=>b.isMine || b.isProtected);
+
+    const mineCount=r.branches.filter(b=>b.eligible).length;
+    const staleMine=r.branches.filter(b=>b.eligible && b.stale).length;
+    totalMine+=mineCount; totalStaleMine+=staleMine;
+
+    const block=document.createElement("div");
+    block.className="repo-block";
+    block.innerHTML=`
+      <div class="repo-head">
+        <div class="repo-name"><span class="owner">${esc(r.owner)}/</span>${esc(r.repo)}</div>
+        <div class="repo-meta">
+          <span class="chip def">default: ${esc(r.defaultBranch||"?")}</span>
+          <span class="chip">${r.branches.length} branches</span>
+          <span class="chip mine">${mineCount} yours</span>
+          <span class="chip stale">${staleMine} stale &amp; yours</span>
+        </div>
+      </div>
+      <div class="repo-toolbar">
+        <button data-act="all" data-repo="${esc(r.owner)}/${esc(r.repo)}">Select all eligible</button>
+        <button data-act="stale" data-repo="${esc(r.owner)}/${esc(r.repo)}">Select stale only</button>
+        <button data-act="none" data-repo="${esc(r.owner)}/${esc(r.repo)}">Clear</button>
+      </div>`;
+
+    if(!rows.length){
+      const e=document.createElement("div");
+      e.className="empty-repo";
+      e.textContent=showOthers?"No branches found.":"No branches owned by you in this repo. Enable “Show branches owned by others”.";
+      block.appendChild(e);
+    }else{
+      const scroll=document.createElement("div");
+      scroll.className="tbl-scroll";
+      const tbl=document.createElement("table");
+      tbl.innerHTML=`<thead><tr>
+        <th style="width:34px"></th>
+        <th>Branch</th>
+        <th>Last commit</th>
+        <th>Age</th>
+        <th>Author</th>
+        <th>Merged?</th>
+        <th>Eligibility</th>
+        <th>Status</th>
+      </tr></thead>`;
+      const tb=document.createElement("tbody");
+      rows.forEach(b=>{
+        const id=cssId(r.owner,r.repo,b.name);
+        const tr=document.createElement("tr");
+        if(b.eligible) tr.className="row-mine";
+        const checkable=b.eligible;
+        const checked=b.eligible && b.stale;
+        let eligTag;
+        if(b.isProtected) eligTag='<span class="tag protected">'+(b.isDefault?"default · locked":"protected")+'</span>';
+        else if(b.own==="other") eligTag='<span class="tag notyours">not yours</span>';
+        else if(b.own==="unknown") eligTag='<span class="tag notyours">author unknown</span>';
+        else eligTag='<span class="tag yours">yours</span>';
+
+        tr.innerHTML=`
+          <td><input type="checkbox" data-id="${id}"
+              data-owner="${esc(r.owner)}" data-repo="${esc(r.repo)}" data-branch="${esc(b.name)}"
+              ${checkable?"":"disabled"} ${checked?"checked":""}></td>
+          <td class="bname">${esc(b.name)}</td>
+          <td class="b-date">${b.date?fmtDate(b.date):"—"}</td>
+          <td class="b-age ${b.stale?"old":""}">${b.date?fmtAge(b.date):"—"}</td>
+          <td class="b-author">${esc(b.author && (b.author.user&&b.author.user.login||b.author.name) || "—")}</td>
+          <td data-merged="${id}">${b.isDefault?'<span class="tag unknown">—</span>':'<span class="spin"></span>'}</td>
+          <td>${eligTag}</td>
+          <td class="b-status" data-status="${id}"></td>`;
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(tb);
+      scroll.appendChild(tbl);
+      block.appendChild(scroll);
+      anyVisible=true;
+    }
+    els.results.appendChild(block);
+  });
+
+  els.results.style.display="block";
+
+  if(!anyVisible && totalMine===0){
+    banner("Scan complete — found no branches you own across these repos. (Ownership = latest commit on the branch is authored by @"+ME.login+".)","info");
+  }else{
+    banner("Scan complete · "+totalStaleMine+" of your branches are older than "+ageMonths+" month(s) and pre-selected.","info");
+  }
+
+  // wire checkboxes + toolbars
+  els.results.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.addEventListener("change",updateSelection));
+  els.results.querySelectorAll('.repo-toolbar button').forEach(btn=>btn.addEventListener("click",()=>repoBulk(btn.dataset.repo,btn.dataset.act)));
+  updateSelection();
+}
+
+function repoBulk(repoKey, act){
+  els.results.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+    if(cb.disabled) return;
+    if((cb.dataset.owner+"/"+cb.dataset.repo)!==repoKey) return;
+    const tr=cb.closest("tr");
+    if(act==="all") cb.checked=true;
+    else if(act==="none") cb.checked=false;
+    else if(act==="stale"){
+      const ageCell=tr.querySelector(".b-age");
+      cb.checked=ageCell.classList.contains("old");
+    }
+  });
+  updateSelection();
+}
+
+// =================== selection ===================
+function selectedTargets(){
+  const out=[];
+  els.results.querySelectorAll('input[type=checkbox]:checked').forEach(cb=>{
+    if(cb.disabled) return;
+    out.push({owner:cb.dataset.owner, repo:cb.dataset.repo, branch:cb.dataset.branch, id:cb.dataset.id});
+  });
+  return out;
+}
+// hard re-validation: never trust the checkbox alone
+function safeTargets(){
+  const raw=selectedTargets();
+  return raw.filter(t=>{
+    const rec=SCAN.find(r=>r.owner===t.owner && r.repo===t.repo);
+    if(!rec) return false;
+    const b=rec.branches.find(x=>x.name===t.branch);
+    return b && b.eligible && !b.isProtected && b.isMine;
+  });
+}
+function updateSelection(){
+  const n=safeTargets().length;
+  els.selCount.textContent=n;
+  els.deleteBtn.disabled=(n===0)||DELETING;
+  els.actionbar.style.display = n>0 ? "flex" : "none";
+}
+
+// =================== delete flow ===================
+function openModal(){
+  const targets=safeTargets();
+  if(!targets.length) return;
+  els.mCount.textContent=targets.length;
+  // group by repo
+  const byRepo={};
+  targets.forEach(t=>{ (byRepo[t.owner+"/"+t.repo] ||= []).push(t.branch); });
+  els.modalList.innerHTML="";
+  Object.entries(byRepo).forEach(([repo,branches])=>{
+    const h=document.createElement("div"); h.className="mrepo"; h.textContent=repo+" · "+branches.length;
+    els.modalList.appendChild(h);
+    branches.forEach(b=>{
+      const d=document.createElement("div"); d.className="mb"; d.textContent=b;
+      els.modalList.appendChild(d);
+    });
+  });
+  els.confirmType.value="";
+  els.confirmBtn.disabled=true;
+  els.modalBg.style.display="flex";
+  els.confirmType.focus();
+}
+function closeModal(){ els.modalBg.style.display="none"; }
+
+async function runDelete(){
+  const targets=safeTargets();
+  if(!targets.length){ closeModal(); return; }
+  DELETING=true;
+  closeModal();
+  els.deleteBtn.disabled=true;
+  els.loadBtn.disabled=true;
+  banner("Deleting "+targets.length+" branch(es)…","info");
+
+  let ok=0, fail=0;
+  await runPool(targets, 3, async t=>{
+    const cell=document.querySelector(`[data-status="${t.id}"]`);
+    if(cell){ cell.className="b-status pending"; cell.innerHTML='<span class="spin"></span> deleting'; }
+    try{
+      const res=await ghREST(`/repos/${t.owner}/${t.repo}/git/refs/heads/${encodeURIComponent(t.branch)}`, {method:"DELETE"});
+      if(res.status===204){
+        ok++; markStatus(t,"ok","✓ deleted");
+        const cb=document.querySelector(`input[data-id="${t.id}"]`);
+        if(cb){ cb.checked=false; cb.disabled=true; }
+      }else if(res.status===404){
+        ok++; markStatus(t,"ok","already gone");
+      }else if(res.status===403){
+        fail++; markStatus(t,"err","✗ forbidden (403)");
+      }else if(res.status===422){
+        fail++; markStatus(t,"err","✗ protected (422)");
+      }else{
+        fail++; markStatus(t,"err","✗ error "+res.status);
+      }
+    }catch(err){
+      fail++; markStatus(t,"err","✗ network error");
+    }
+    if(rlState.restRemaining!==null && rlState.restRemaining<=1){
+      banner("Rate limit hit during deletion — remaining branches not processed. Resets at "+resetTime(rlState.restReset)+".","error");
+    }
+  });
+
+  DELETING=false;
+  els.loadBtn.disabled=false;
+  banner("Done · "+ok+" deleted"+(fail?(" · "+fail+" failed"):"")+".", fail?"error":"info");
+  updateSelection();
+}
+function markStatus(t, cls, txt){
+  const cell=document.querySelector(`[data-status="${t.id}"]`);
+  if(cell){ cell.className="b-status "+cls; cell.textContent=txt; }
+}
+
+// =================== wiring ===================
+els.loadBtn.addEventListener("click", loadBranches);
+els.clearBtn.addEventListener("click", ()=>{
+  PAT=""; ME={login:null,name:null,emails:[]}; SCAN=[];
+  els.pat.value=""; els.repos.value=""; els.age.value="6";
+  els.results.style.display="none"; els.results.innerHTML="";
+  els.actionbar.style.display="none"; clearBanner();
+  els.log.innerHTML=""; els.log.style.display="none";
+  els.whoami.textContent="—"; els.rlRest.textContent="—"; els.rlGql.textContent="—"; els.rlReset.textContent="—";
+});
+els.showOthers.addEventListener("change", ()=>{ if(SCAN.length) renderResults(Math.max(0,Number(els.age.value)||0)); });
+els.deleteBtn.addEventListener("click", openModal);
+els.cancelBtn.addEventListener("click", closeModal);
+els.modalBg.addEventListener("click", e=>{ if(e.target===els.modalBg) closeModal(); });
+els.confirmType.addEventListener("input", ()=>{ els.confirmBtn.disabled = els.confirmType.value!=="DELETE"; });
+els.confirmBtn.addEventListener("click", runDelete);
+document.addEventListener("keydown", e=>{ if(e.key==="Escape" && els.modalBg.style.display==="flex") closeModal(); });
+</script>
+</body>
+</html>

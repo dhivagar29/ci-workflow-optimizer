@@ -1,0 +1,2562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src https://api.github.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Stale Branch Cleaner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   EDIT ME — protected branches that can NEVER be deleted.
+   (Matched case-insensitively. The repo's default branch is
+   also auto-detected from the API and always protected.)
+   These are mirrored in JS below as PROTECTED_BRANCHES.
+   ============================================================ */
+
+:root{
+  --bg:#091022;
+  --panel:#0f1d3d;
+  --panel-2:#17284c;
+  --line:#293c64;
+  --line-soft:#1c2c4d;
+  --txt:#dde6f5;
+  --txt-dim:#93a2c2;
+  --txt-faint:#5f6f90;
+  --amber:#fe3842;
+  --amber-soft:#371016;
+  --red:#fe3842;
+  --red-soft:#3a1117;
+  --green:#3fb950;
+  --green-soft:#0e2c1c;
+  --cyan:#5b9dff;
+  --cyan-soft:#13294f;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--sans);
+  background:
+    radial-gradient(1200px 600px at 80% -10%, #16284f 0%, transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, #2a0e15 0%, transparent 55%),
+    var(--bg);
+  background-attachment:fixed;
+  color:var(--txt);
+  line-height:1.5;
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(var(--line-soft) 1px,transparent 1px),
+    linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);
+  background-size:42px 42px;
+  opacity:.18;
+  mask-image:radial-gradient(circle at 50% 30%,#000 0%,transparent 80%);
+}
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:32px 22px 140px}
+
+/* ---------- header ---------- */
+header{
+  display:flex;align-items:flex-end;justify-content:space-between;
+  gap:20px;flex-wrap:wrap;
+  border-bottom:1px solid var(--line);
+  padding-bottom:20px;margin-bottom:26px;
+}
+.brand{display:flex;flex-direction:column;gap:6px}
+.eyebrow{
+  font-family:var(--mono);font-size:11px;letter-spacing:.32em;
+  text-transform:uppercase;color:var(--amber);font-weight:600;
+  display:flex;align-items:center;gap:9px;
+}
+.eyebrow::before{content:"";width:30px;height:1px;background:var(--amber)}
+h1{
+  font-family:var(--mono);font-weight:700;font-size:clamp(26px,4vw,40px);
+  margin:0;letter-spacing:-.01em;line-height:1.02;
+}
+h1 .slash{color:var(--amber)}
+.tagline{color:var(--txt-dim);font-size:13.5px;max-width:46ch}
+.ratebox{
+  font-family:var(--mono);font-size:11.5px;color:var(--txt-dim);
+  border:1px solid var(--line);border-radius:10px;padding:11px 14px;
+  background:rgba(20,26,34,.6);min-width:188px;
+}
+.ratebox .rl-row{display:flex;justify-content:space-between;gap:14px;padding:2px 0}
+.ratebox b{color:var(--txt);font-weight:600}
+#whoami{color:var(--green)}
+
+/* ---------- panels ---------- */
+.panel{
+  background:linear-gradient(180deg,var(--panel) 0%,#11161d 100%);
+  border:1px solid var(--line);border-radius:14px;
+  padding:22px;margin-bottom:20px;
+  box-shadow:0 18px 40px -28px rgba(0,0,0,.9);
+}
+.panel-title{
+  font-family:var(--mono);font-size:12px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--txt-dim);font-weight:600;
+  margin:0 0 16px;display:flex;align-items:center;gap:10px;
+}
+.panel-title .num{
+  width:22px;height:22px;display:grid;place-items:center;
+  border:1px solid var(--line);border-radius:6px;color:var(--amber);
+  font-size:11px;background:var(--amber-soft);
+}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+
+label.field{display:block}
+.lbl{
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--txt-dim);
+  margin-bottom:7px;display:flex;align-items:center;gap:8px;
+}
+input[type=password],input[type=text],input[type=number],textarea{
+  width:100%;background:#0b0f15;border:1px solid var(--line);
+  color:var(--txt);font-family:var(--mono);font-size:13.5px;
+  padding:11px 13px;border-radius:9px;outline:none;
+  transition:border-color .15s,box-shadow .15s;resize:vertical;
+}
+input:focus,textarea:focus{border-color:var(--amber);box-shadow:0 0 0 3px var(--amber-soft)}
+textarea{min-height:104px;line-height:1.65}
+.hint{font-size:11.5px;color:var(--txt-faint);margin-top:7px;font-family:var(--mono)}
+.hint code{color:var(--amber);background:var(--amber-soft);padding:1px 5px;border-radius:4px}
+
+.row-end{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-top:18px}
+.age-field{width:150px}
+
+/* ---------- buttons ---------- */
+button{
+  font-family:var(--mono);font-weight:600;font-size:13px;letter-spacing:.04em;
+  border:1px solid var(--line);border-radius:9px;cursor:pointer;
+  padding:12px 20px;color:var(--txt);background:var(--panel-2);
+  transition:transform .08s,background .15s,border-color .15s,opacity .15s;
+}
+button:hover:not(:disabled){border-color:var(--amber);background:#222c38}
+button:active:not(:disabled){transform:translateY(1px)}
+button:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:var(--amber);color:#fff;border-color:var(--amber)}
+.btn-primary:hover:not(:disabled){background:#ff525b;border-color:#ff525b}
+.btn-danger{background:var(--red);color:#fff;border-color:var(--red)}
+.btn-danger:hover:not(:disabled){background:#ff525b;border-color:#ff525b}
+.btn-ghost{background:transparent}
+
+/* ---------- log ---------- */
+#log{
+  font-family:var(--mono);font-size:12px;color:var(--txt-dim);
+  background:#080b10;border:1px solid var(--line-soft);border-radius:9px;
+  padding:12px 14px;max-height:150px;overflow:auto;margin-top:16px;display:none;
+}
+#log .l{padding:1px 0;white-space:pre-wrap}
+#log .l.err{color:var(--red)}
+#log .l.ok{color:var(--green)}
+#log .l.warn{color:var(--amber)}
+
+/* ---------- results ---------- */
+#results{display:none}
+.repo-block{margin-bottom:24px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)}
+.repo-head{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  flex-wrap:wrap;padding:14px 18px;background:var(--panel-2);
+  border-bottom:1px solid var(--line);
+}
+.repo-name{font-family:var(--mono);font-weight:600;font-size:15px}
+.repo-name .owner{color:var(--txt-dim)}
+.repo-meta{display:flex;gap:10px;flex-wrap:wrap}
+.chip{
+  font-family:var(--mono);font-size:11px;padding:4px 9px;border-radius:20px;
+  border:1px solid var(--line);color:var(--txt-dim);
+}
+.chip.def{color:var(--cyan);border-color:#234a78;background:var(--cyan-soft)}
+.chip.stale{color:var(--amber);border-color:#5a4410;background:var(--amber-soft)}
+.chip.mine{color:var(--green);border-color:#1e5a32;background:var(--green-soft)}
+
+.repo-toolbar{display:flex;gap:8px;padding:10px 18px;border-bottom:1px solid var(--line-soft);background:#0e131a}
+.repo-toolbar button{padding:7px 13px;font-size:11.5px}
+
+.tbl-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--txt-faint);text-align:left;font-weight:600;
+  padding:11px 14px;border-bottom:1px solid var(--line);white-space:nowrap;
+}
+td{padding:11px 14px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr.row-mine:hover{background:rgba(63,185,80,.04)}
+.bname{font-family:var(--mono);font-weight:500;color:var(--txt);word-break:break-all}
+.b-age{font-family:var(--mono);color:var(--txt-dim);white-space:nowrap}
+.b-age.old{color:var(--amber)}
+.b-date{font-family:var(--mono);font-size:12px;color:var(--txt-dim);white-space:nowrap}
+.b-author{font-size:12px;color:var(--txt-dim)}
+.tag{font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:5px;white-space:nowrap}
+.tag.protected{color:var(--cyan);background:var(--cyan-soft);border:1px solid #234a78}
+.tag.notyours{color:var(--txt-faint);background:#161c24;border:1px solid var(--line)}
+.tag.yours{color:var(--green);background:var(--green-soft);border:1px solid #1e5a32}
+.tag.merged{color:var(--green)}
+.tag.unmerged{color:var(--amber)}
+.tag.unknown{color:var(--txt-faint)}
+.b-status{font-family:var(--mono);font-size:11.5px;white-space:nowrap}
+.b-status.ok{color:var(--green)}
+.b-status.err{color:var(--red)}
+.b-status.pending{color:var(--amber)}
+
+input[type=checkbox]{
+  width:17px;height:17px;accent-color:var(--amber);cursor:pointer;
+}
+input[type=checkbox]:disabled{cursor:not-allowed;opacity:.35}
+
+.empty-repo{padding:20px 18px;color:var(--txt-faint);font-family:var(--mono);font-size:12.5px}
+
+/* ---------- sticky action bar ---------- */
+#actionbar{
+  position:fixed;left:0;right:0;bottom:0;z-index:40;
+  display:none;align-items:center;justify-content:space-between;gap:16px;
+  padding:14px 22px;
+  background:
+    repeating-linear-gradient(45deg,#2a0e15 0 18px,#0c1429 18px 36px);
+  border-top:2px solid var(--amber);
+  box-shadow:0 -16px 40px -20px rgba(0,0,0,.95);
+}
+#actionbar .inner{max-width:1180px;margin:0 auto;width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.selsummary{font-family:var(--mono);font-size:13px;color:var(--txt)}
+.selsummary b{color:var(--amber);font-size:16px}
+.selsummary .sub{display:block;color:var(--txt-faint);font-size:11px;margin-top:2px}
+
+/* ---------- modal ---------- */
+.modal-bg{
+  position:fixed;inset:0;z-index:60;display:none;
+  background:rgba(4,6,9,.82);backdrop-filter:blur(3px);
+  align-items:center;justify-content:center;padding:22px;
+}
+.modal{
+  background:var(--panel);border:1px solid var(--red);border-radius:16px;
+  max-width:560px;width:100%;max-height:84vh;display:flex;flex-direction:column;
+  box-shadow:0 30px 80px -20px rgba(0,0,0,.9);overflow:hidden;
+}
+.modal-head{padding:20px 22px 16px;border-bottom:1px solid var(--line)}
+.modal-head .mtitle{font-family:var(--mono);font-weight:700;font-size:18px;color:var(--red);display:flex;align-items:center;gap:10px}
+.modal-head p{margin:10px 0 0;color:var(--txt-dim);font-size:13px}
+.modal-list{overflow:auto;padding:8px 22px;flex:1}
+.modal-list .mrepo{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-faint);margin:12px 0 6px}
+.modal-list .mb{font-family:var(--mono);font-size:12.5px;color:var(--txt);padding:3px 0 3px 14px;border-left:2px solid var(--red-soft)}
+.modal-foot{padding:18px 22px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:14px}
+.confirm-type .lbl{margin-bottom:6px}
+.confirm-type code{color:var(--red)}
+.modal-actions{display:flex;gap:12px;justify-content:flex-end}
+@media(max-width:520px){.modal-actions{flex-direction:column-reverse}.modal-actions button{width:100%}}
+
+.banner{
+  font-family:var(--mono);font-size:12px;border-radius:9px;padding:11px 14px;margin-top:14px;display:none;
+}
+.banner.show{display:block}
+.banner.error{color:var(--red);background:var(--red-soft);border:1px solid #5a2420}
+.banner.info{color:var(--cyan);background:var(--cyan-soft);border:1px solid #234a78}
+
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--amber);border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+.foot-note{font-family:var(--mono);font-size:11px;color:var(--txt-faint);text-align:center;margin-top:30px;line-height:1.8}
+.foot-note .dot{color:var(--amber)}
+
+/* ===== additive: mode switch + Pull Request module (does not affect branch styles) ===== */
+.modeswitch{display:inline-flex;gap:4px;background:#0b1226;border:1px solid var(--line);border-radius:11px;padding:4px;margin-bottom:18px}
+.modeswitch button{background:transparent;border:1px solid transparent;border-radius:8px;padding:9px 20px;color:var(--txt-dim);font-family:var(--mono);font-size:12.5px;letter-spacing:.05em}
+.modeswitch button.active{background:var(--panel-2);color:var(--txt);border-color:var(--line)}
+.modeswitch button:hover:not(.active){color:var(--txt)}
+#prControls{display:none;margin-top:4px}
+#prControls.show{display:block}
+.pr-config{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:16px}
+@media(max-width:760px){.pr-config{grid-template-columns:1fr}}
+.pr-note{font-family:var(--mono);font-size:11.5px;color:var(--txt-faint);margin-top:12px}
+.pr-note.warn{color:var(--amber)}
+.btn-pr{background:var(--cyan);color:#06122a;border-color:var(--cyan)}
+.btn-pr:hover:not(:disabled){background:#7db4ff;border-color:#7db4ff}
+
+/* ---------- Actions storage module (additive) ---------- */
+:root{--act:#9d7bff;--act-soft:#241a45}
+.btn-act{background:var(--act);color:#120a2e;border-color:var(--act)}
+.btn-act:hover:not(:disabled){background:#b499ff;border-color:#b499ff}
+#actControls{display:none;border-top:1px dashed var(--line);margin-top:18px;padding-top:16px}
+#actControls.show{display:block}
+#actActionbar{
+  position:fixed;left:0;right:0;bottom:0;z-index:40;display:none;
+  padding:14px 22px;background:repeating-linear-gradient(45deg,#1b1240 0 18px,#0c1429 18px 36px);
+  border-top:2px solid var(--act);box-shadow:0 -16px 40px -20px rgba(0,0,0,.95);
+}
+#actActionbar .inner{max-width:1180px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.modal.act{border-color:var(--act)}
+.tag.t-run{color:var(--cyan);background:var(--cyan-soft);border:1px solid #234a78}
+.tag.t-artifact{color:var(--green);background:var(--green-soft);border:1px solid #1e5a32}
+.tag.t-cache{color:var(--act);background:var(--act-soft);border:1px solid #43318a}
+.b-size{font-family:var(--mono);color:var(--txt-dim);white-space:nowrap}
+
+/* ---------- collapsible repo sections (additive) ---------- */
+.repo-block .repo-head{cursor:pointer;user-select:none}
+.repo-block .repo-head:hover{background:#1c2f57}
+.repo-block .repo-head:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+.clps-chev{
+  font-family:var(--mono);color:var(--txt-dim);font-size:12px;
+  display:inline-block;width:16px;transition:transform .15s;transform:rotate(90deg);
+  margin-right:2px;
+}
+.repo-block.collapsed .clps-chev{transform:rotate(0deg)}
+.repo-block.collapsed .tbl-scroll,
+.repo-block.collapsed .repo-toolbar,
+.repo-block.collapsed .empty-repo{display:none}
+.clps-badge{
+  font-family:var(--mono);font-size:11px;padding:4px 9px;border-radius:20px;
+  border:1px solid #5a4410;color:var(--amber);background:var(--amber-soft);display:none;
+}
+.clps-badge.on{display:inline-block}
+.clps-badge .b-ok{color:var(--green)}
+.clps-badge .b-err{color:var(--red)}
+.clps-bar{display:flex;gap:8px;justify-content:flex-end;margin:0 0 12px}
+.clps-bar button{padding:7px 13px;font-size:11.5px;background:transparent}
+
+/* ---------- protection audit module (additive, read-only) ---------- */
+:root{--aud:#2fd4a7;--aud-soft:#0a2e24}
+.btn-aud{background:var(--aud);color:#052018;border-color:var(--aud)}
+.btn-aud:hover:not(:disabled){background:#57e4bd;border-color:#57e4bd}
+#audControls{display:none;border-top:1px dashed var(--line);margin-top:18px;padding-top:16px}
+#audControls.show{display:block}
+.chip.v-ok{color:var(--green);border-color:#1e5a32;background:var(--green-soft)}
+.chip.v-drift{color:var(--red);border-color:#5a2420;background:var(--red-soft)}
+.chip.v-info{color:var(--cyan);border-color:#234a78;background:var(--cyan-soft)}
+.chip.v-noacc{color:var(--txt-faint);border-color:var(--line);background:#141d33}
+.tag.f-ok{color:var(--green);background:var(--green-soft);border:1px solid #1e5a32}
+.tag.f-drift{color:var(--red);background:var(--red-soft);border:1px solid #5a2420}
+.tag.f-info{color:var(--cyan);background:var(--cyan-soft);border:1px solid #234a78}
+.aud-rules{font-family:var(--mono);font-size:11.5px;color:var(--txt-dim)}
+.aud-rules .r-on{color:var(--aud)}
+.aud-rules .r-off{color:var(--red)}
+
+/* ---------- org discovery (additive) ---------- */
+#discPanel{border-top:1px dashed var(--line);margin-top:18px;padding-top:14px}
+.disc-row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end}
+.disc-filters{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-top:12px}
+.disc-chk{display:flex;align-items:center;gap:8px;padding-bottom:11px}
+.disc-sm{width:150px}
+#discCount{padding:8px 12px;margin-bottom:6px}
+.b2h{font-family:var(--mono);font-size:12px;color:var(--txt-dim);white-space:nowrap}
+.b2h .h{color:var(--txt)}
+.prtitle{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prnum{font-family:var(--mono);color:var(--cyan);font-weight:600}
+.tag.draft{color:var(--txt-faint);background:#161c24;border:1px solid var(--line)}
+.tag.ready{color:var(--cyan);background:var(--cyan-soft);border:1px solid #234a78}
+.tag.rev-approved{color:var(--green)}
+.tag.rev-changes{color:var(--red)}
+.tag.rev-required{color:var(--amber)}
+.tag.ci-success{color:var(--green)}
+.tag.ci-failure{color:var(--red)}
+.tag.ci-pending{color:var(--amber)}
+.tag.ci-none{color:var(--txt-faint)}
+.tag.nowrite{color:var(--amber);background:var(--amber-soft);border:1px solid #5a4410}
+.branch-pr-flag{font-family:var(--mono);font-size:10.5px;color:var(--cyan);border:1px solid #234a78;background:var(--cyan-soft);padding:2px 7px;border-radius:5px;white-space:nowrap;margin-left:8px}
+#prActionbar{position:fixed;left:0;right:0;bottom:0;z-index:40;display:none;padding:14px 22px;background:repeating-linear-gradient(45deg,#102a4f 0 18px,#0c1429 18px 36px);border-top:2px solid var(--cyan);box-shadow:0 -16px 40px -20px rgba(0,0,0,.95)}
+#prActionbar .inner{max-width:1180px;margin:0 auto;width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+#prActionbar .pr-actions{display:flex;gap:10px;flex-wrap:wrap}
+#prActionbar button{padding:11px 15px;font-size:12px}
+.modal.pr{border-color:var(--cyan)}
+.modal.pr .mtitle{color:var(--cyan)}
+.modal.pr .mb{border-left-color:var(--cyan-soft)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <h1>Stale Branch Cleaner</h1>
+      <div class="tagline">Scan your repos, preview branches you own that have gone cold, and delete them in bulk. Nothing leaves your browser. Nothing deletes without a preview.</div>
+    </div>
+    <div class="ratebox">
+      <div class="rl-row"><span>Signed in</span><b id="whoami">&mdash;</b></div>
+      <div class="rl-row"><span>REST quota</span><b id="rl-rest">&mdash;</b></div>
+      <div class="rl-row"><span>GraphQL quota</span><b id="rl-gql">&mdash;</b></div>
+      <div class="rl-row"><span>Resets</span><b id="rl-reset">&mdash;</b></div>
+    </div>
+  </header>
+
+  <div class="modeswitch" role="tablist">
+    <button id="modeBranches" class="active" type="button">⎇ Branches</button>
+    <button id="modePR" type="button">⇄ Pull Requests</button>
+    <button id="modeActions" type="button">⚙ Actions Storage</button>
+    <button id="modeAudit" type="button">🛡 Protection Audit</button>
+  </div>
+
+  <!-- ============ CONFIG ============ -->
+  <div class="panel">
+    <div class="panel-title"><span class="num">1</span> Connect &amp; configure</div>
+    <div class="grid">
+      <label class="field">
+        <span class="lbl">GitHub Personal Access Token</span>
+        <input type="password" id="pat" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false">
+        <div class="hint">Held in memory only &middot; never stored, logged, or sent anywhere but <code>api.github.com</code>. Needs <code>Contents: Read &amp; write</code> (fine-grained) or the <code>repo</code> scope (classic) — deleting a branch requires push access.</div>
+      </label>
+      <label class="field">
+        <span class="lbl">Repositories &middot; one <code>owner/repo</code> per line</span>
+        <textarea id="repos" placeholder="my-org/service-api&#10;my-org/lambda-jobs&#10;my-org/infra-terraform" spellcheck="false"></textarea>
+      </label>
+    </div>
+
+    <!-- Org discovery (additive helper — only writes into the repo textarea above) -->
+    <div id="discPanel">
+      <div class="disc-row">
+        <label class="field" style="flex:1;min-width:200px">
+          <span class="lbl">Organization &middot; auto-discover repos</span>
+          <input type="text" id="discOrg" placeholder="my-org" spellcheck="false" autocomplete="off">
+        </label>
+        <button class="btn-ghost" id="discBtn" style="align-self:flex-end">⌕ Discover repos</button>
+      </div>
+      <div class="disc-filters" id="discFilters" style="display:none">
+        <label class="disc-chk"><input type="checkbox" id="discNoArchived" checked><span class="lbl" style="margin:0">Exclude archived</span></label>
+        <label class="disc-chk"><input type="checkbox" id="discNoForks" checked><span class="lbl" style="margin:0">Exclude forks</span></label>
+        <label class="disc-chk"><input type="checkbox" id="discPushOnly"><span class="lbl" style="margin:0">Only repos I can push to</span></label>
+        <label class="field disc-sm"><span class="lbl">Topic contains</span><input type="text" id="discTopic" spellcheck="false"></label>
+        <label class="field disc-sm"><span class="lbl">Language</span><input type="text" id="discLang" placeholder="Python" spellcheck="false"></label>
+        <label class="field disc-sm"><span class="lbl">Pushed within (months)</span><input type="number" id="discPushed" min="0" step="1" placeholder="any"></label>
+        <span class="chip stale" id="discCount" style="align-self:flex-end">0 match</span>
+        <button class="btn-primary" id="discFillBtn" style="align-self:flex-end" disabled>▾ Fill repo list</button>
+      </div>
+      <div class="pr-note warn" id="discNote" style="display:none"></div>
+    </div>
+
+    <div class="row-end">
+      <label class="field age-field">
+        <span class="lbl">Stale after (months)</span>
+        <input type="number" id="age" value="6" min="0" step="1">
+      </label>
+      <label class="field" style="display:flex;align-items:center;gap:9px;padding-bottom:11px">
+        <input type="checkbox" id="showOthers">
+        <span class="lbl" style="margin:0">Show branches owned by others (read-only)</span>
+      </label>
+      <button class="btn-primary" id="loadBtn">▸ Load branches</button>
+      <button class="btn-ghost" id="clearBtn">Reset</button>
+    </div>
+
+    <!-- PR-mode controls (hidden in branch mode) -->
+    <div id="prControls">
+      <div class="row-end">
+        <label class="field" style="display:flex;align-items:center;gap:9px;padding-bottom:11px">
+          <input type="checkbox" id="prMineOnly" checked>
+          <span class="lbl" style="margin:0">Only PRs I authored</span>
+        </label>
+        <button class="btn-pr" id="loadPrBtn">▸ Load pull requests</button>
+        <button class="btn-ghost" id="prCsvBtn">⤓ Export CSV</button>
+        <button class="btn-ghost" id="prClearBtn">Reset</button>
+      </div>
+      <div class="pr-config">
+        <label class="field">
+          <span class="lbl">"Stale" label to apply</span>
+          <input type="text" id="prLabelName" value="stale" spellcheck="false">
+        </label>
+        <label class="field">
+          <span class="lbl">Nudge comment template &middot; <code>{age}</code> = months threshold</span>
+          <textarea id="prCommentTpl" style="min-height:70px">This pull request has had no activity in over {age} months and is being flagged as stale. Please update it or close it if it's no longer needed.</textarea>
+        </label>
+      </div>
+      <label class="field" style="display:flex;align-items:center;gap:9px;margin-top:14px">
+        <input type="checkbox" id="prDeleteHead">
+        <span class="lbl" style="margin:0">When closing, also delete the PR's head branch (only if it's yours, same-repo &amp; unprotected)</span>
+      </label>
+      <div class="pr-note">Read-only by default. Write actions (label / comment / close) require the token's <code>Pull requests</code> &amp; <code>Issues</code> permissions and write access to the repo; rows without write access are skipped automatically.</div>
+      <div class="pr-note warn" id="prScopeNote" style="display:none"></div>
+    </div>
+
+    <!-- Actions-mode controls (additive; hidden unless Actions tab active) -->
+    <div id="actControls">
+      <div class="row-end">
+        <label class="field" style="display:flex;align-items:center;gap:9px;padding-bottom:11px">
+          <input type="checkbox" id="actRuns" checked><span class="lbl" style="margin:0">Workflow runs</span>
+        </label>
+        <label class="field" style="display:flex;align-items:center;gap:9px;padding-bottom:11px">
+          <input type="checkbox" id="actArtifacts" checked><span class="lbl" style="margin:0">Artifacts</span>
+        </label>
+        <label class="field" style="display:flex;align-items:center;gap:9px;padding-bottom:11px">
+          <input type="checkbox" id="actCaches" checked><span class="lbl" style="margin:0">Caches</span>
+        </label>
+        <button class="btn-act" id="loadActBtn">▸ Scan Actions storage</button>
+        <button class="btn-ghost" id="actCsvBtn">⤓ Export CSV</button>
+        <button class="btn-ghost" id="actClearBtn">Reset</button>
+      </div>
+      <div class="pr-note">Finds workflow runs and artifacts <b>created</b>, and caches <b>last used</b>, more than the threshold months ago. Deleting them frees Actions storage; it never touches code, branches, or PRs. Requires the token's <code>Actions: Read &amp; write</code> permission (fine-grained) or <code>repo</code> scope (classic).</div>
+      <div class="pr-note warn" id="actScopeNote" style="display:none"></div>
+    </div>
+
+    <!-- Audit-mode controls (additive; read-only feature) -->
+    <div id="audControls">
+      <div class="row-end">
+        <button class="btn-aud" id="loadAudBtn">▸ Run protection audit</button>
+        <button class="btn-ghost" id="audCsvBtn">⤓ Export CSV</button>
+        <button class="btn-ghost" id="audClearBtn">Reset</button>
+      </div>
+      <div class="pr-note"><b>Read-only.</b> Audits each repo against its own reality — no fixed baseline: the repo's default branch (whatever it's named) must be protected in GitHub, and every branch from this tool's denylist <em>that exists in the repo</em> must be protected. Repos with only <code>master</code>+<code>development</code> are judged on those alone. Branches GitHub protects that are outside the denylist are reported as INFO. Months threshold is not used here.</div>
+      <div class="pr-note warn" id="audScopeNote" style="display:none"></div>
+    </div>
+
+    <div class="banner" id="topBanner"></div>
+    <div id="log"></div>
+  </div>
+
+  <!-- ============ RESULTS ============ -->
+  <div id="results"></div>
+  <div id="prResults" style="display:none"></div>
+  <div id="actResults" style="display:none"></div>
+  <div id="audResults" style="display:none"></div>
+
+  <div class="foot-note">
+    <span class="dot">●</span> Runs entirely client-side &middot; open this file from your own machine
+    <br>Default branch + protected branches are locked &middot; only branches whose latest commit is authored by you can be deleted
+  </div>
+</div>
+
+<!-- ============ STICKY ACTION BAR ============ -->
+<div id="actionbar">
+  <div class="inner">
+    <div class="selsummary">
+      <b id="selCount">0</b> branch(es) selected for deletion
+      <span class="sub">All selections are yours, stale-eligible, and unprotected.</span>
+    </div>
+    <button class="btn-danger" id="deleteBtn" disabled>✕ Delete selected…</button>
+  </div>
+</div>
+
+<!-- ============ PR ACTION BAR ============ -->
+<div id="prActionbar">
+  <div class="inner">
+    <div class="selsummary">
+      <b id="prSelCount">0</b> pull request(s) selected
+      <span class="sub">Actions apply only to selected PRs in repos you can write to.</span>
+    </div>
+    <div class="pr-actions">
+      <button class="btn-pr-ghost btn-ghost" id="prLabelBtn" disabled>🏷 Add label…</button>
+      <button class="btn-pr-ghost btn-ghost" id="prCommentBtn" disabled>💬 Nudge comment…</button>
+      <button class="btn-pr" id="prCloseBtn" disabled>⊘ Close selected…</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ CONFIRM MODAL ============ -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="mtitle">⚠ Confirm permanent deletion</div>
+      <p>You are about to delete <b id="mCount" style="color:var(--red)">0</b> branch(es). This cannot be undone from here. Review the full list:</p>
+    </div>
+    <div class="modal-list" id="modalList"></div>
+    <div class="modal-foot">
+      <label class="confirm-type field">
+        <span class="lbl">Type <code>DELETE</code> to arm the button</span>
+        <input type="text" id="confirmType" placeholder="DELETE" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="cancelBtn">Cancel</button>
+        <button class="btn-danger" id="confirmBtn" disabled>✕ Delete these branches</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PR CONFIRM MODAL (separate from branch modal) ============ -->
+<div class="modal-bg" id="prModalBg">
+  <div class="modal pr">
+    <div class="modal-head">
+      <div class="mtitle" id="prModalTitle">Confirm action</div>
+      <p id="prModalDesc"></p>
+    </div>
+    <div class="modal-list" id="prModalList"></div>
+    <div class="modal-foot">
+      <label class="confirm-type field">
+        <span class="lbl">Type <code>CONFIRM</code> to arm the button</span>
+        <input type="text" id="prConfirmType" placeholder="CONFIRM" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="prCancelBtn">Cancel</button>
+        <button class="btn-pr" id="prConfirmBtn" disabled>Run action</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ACTIONS STORAGE ACTION BAR ============ -->
+<div id="actActionbar">
+  <div class="inner">
+    <div class="selsummary">
+      <b id="actSelCount">0</b> item(s) selected &middot; <b id="actSelSize" style="color:var(--act)">0 B</b> reclaimable
+      <span class="sub">Runs, artifacts and caches only — never code, branches, or PRs.</span>
+    </div>
+    <button class="btn-act" id="actDeleteBtn" disabled>✕ Delete selected…</button>
+  </div>
+</div>
+
+<!-- ============ ACTIONS STORAGE CONFIRM MODAL (separate) ============ -->
+<div class="modal-bg" id="actModalBg">
+  <div class="modal act">
+    <div class="modal-head">
+      <div class="mtitle" style="color:var(--act)">⚙ Confirm Actions storage deletion</div>
+      <p id="actModalDesc"></p>
+    </div>
+    <div class="modal-list" id="actModalList"></div>
+    <div class="modal-foot">
+      <label class="confirm-type field">
+        <span class="lbl">Type <code style="color:var(--act)">CONFIRM</code> to arm the button</span>
+        <input type="text" id="actConfirmType" placeholder="CONFIRM" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="actCancelBtn">Cancel</button>
+        <button class="btn-act" id="actConfirmBtn" disabled>Delete selected items</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   PROTECTED_BRANCHES — EDIT ME.
+   These branch names can never be selected or deleted, in any
+   repo, under any code path (matched case-insensitively).
+   The repo's own default branch is auto-detected and added
+   to this set per repo as well.
+   ============================================================ */
+const PROTECTED_BRANCHES = ["master","development","development_2","test","test_2"];
+
+const API = "https://api.github.com";
+const PROTECTED = new Set(PROTECTED_BRANCHES.map(b => b.toLowerCase()));
+const MS_PER_MONTH = 1000 * 60 * 60 * 24 * 30.44;
+
+// ---- in-memory state (never persisted) ----
+let PAT = "";
+let ME = { login: null, name: null, emails: [] };
+let SCAN = [];          // [{owner, repo, defaultBranch, branches:[...]}]
+let DELETING = false;
+
+// ---- element refs ----
+const $ = id => document.getElementById(id);
+const els = {
+  pat:$("pat"), repos:$("repos"), age:$("age"), showOthers:$("showOthers"),
+  loadBtn:$("loadBtn"), clearBtn:$("clearBtn"), results:$("results"),
+  log:$("log"), topBanner:$("topBanner"),
+  actionbar:$("actionbar"), selCount:$("selCount"), deleteBtn:$("deleteBtn"),
+  modalBg:$("modalBg"), modalList:$("modalList"), mCount:$("mCount"),
+  confirmType:$("confirmType"), confirmBtn:$("confirmBtn"),
+  cancelBtn:$("cancelBtn"),
+  whoami:$("whoami"), rlRest:$("rl-rest"), rlGql:$("rl-gql"), rlReset:$("rl-reset")
+};
+
+// =================== helpers ===================
+function log(msg, cls){
+  els.log.style.display="block";
+  const d=document.createElement("div");
+  d.className="l"+(cls?" "+cls:"");
+  d.textContent=msg;
+  els.log.appendChild(d);
+  els.log.scrollTop=els.log.scrollHeight;
+}
+function banner(msg, type){
+  els.topBanner.textContent=msg;
+  els.topBanner.className="banner show "+(type||"info");
+}
+function clearBanner(){ els.topBanner.className="banner"; }
+function esc(s){ return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function fmtAge(date){
+  const months=(Date.now()-date.getTime())/MS_PER_MONTH;
+  if(months<1){ const days=Math.max(0,Math.round((Date.now()-date.getTime())/86400000)); return days+"d"; }
+  if(months<12) return Math.round(months)+"mo";
+  return (months/12).toFixed(1)+"y";
+}
+function fmtDate(date){ return date.toISOString().slice(0,10); }
+function resetTime(epochSec){
+  if(!epochSec) return "—";
+  const d=new Date(epochSec*1000);
+  return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+}
+
+// ---- rate-limit surfacing ----
+let rlState={restRemaining:null,restReset:null,gqlRemaining:null,gqlReset:null};
+function updateRestRL(headers){
+  const rem=headers.get("x-ratelimit-remaining");
+  const rst=headers.get("x-ratelimit-reset");
+  if(rem!==null){ rlState.restRemaining=Number(rem); els.rlRest.textContent=rem; }
+  if(rst!==null){ rlState.restReset=Number(rst); els.rlReset.textContent=resetTime(Number(rst)); }
+}
+function updateGqlRL(rl){
+  if(!rl) return;
+  rlState.gqlRemaining=rl.remaining;
+  els.rlGql.textContent=rl.remaining;
+  if(rl.resetAt){ els.rlReset.textContent=new Date(rl.resetAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); }
+}
+
+// ---- fetch wrappers ----
+async function ghREST(path, opts={}){
+  const res=await fetch(API+path, {
+    ...opts,
+    headers:{
+      "Authorization":"Bearer "+PAT,
+      "Accept":"application/vnd.github+json",
+      "X-GitHub-Api-Version":"2022-11-28",
+      ...(opts.headers||{})
+    }
+  });
+  updateRestRL(res.headers);
+  return res;
+}
+async function ghGraphQL(query, variables){
+  const res=await fetch(API+"/graphql",{
+    method:"POST",
+    headers:{
+      "Authorization":"Bearer "+PAT,
+      "Content-Type":"application/json"
+    },
+    body:JSON.stringify({query, variables})
+  });
+  updateRestRL(res.headers);
+  if(res.status===401) throw {code:401};
+  const data=await res.json().catch(()=>({}));
+  if(data && data.data && data.data.rateLimit) updateGqlRL(data.data.rateLimit);
+  if(data.errors && (!data.data || !data.data.repository)) throw {code:"gql", errors:data.errors};
+  return data;
+}
+
+// ---- concurrency pool ----
+async function runPool(items, limit, worker){
+  const queue=items.slice();
+  const runners=Array.from({length:Math.min(limit,queue.length)},async()=>{
+    while(queue.length){
+      const item=queue.shift();
+      try{ await worker(item); }catch(e){ /* worker handles its own errors */ }
+    }
+  });
+  await Promise.all(runners);
+}
+
+// =================== identity ===================
+async function loadMe(){
+  const res=await ghREST("/user");
+  if(res.status===401) throw {code:401};
+  if(!res.ok) throw {code:res.status, msg:"Could not read your account ("+res.status+")."};
+  const u=await res.json();
+  ME.login=u.login; ME.name=u.name||null;
+  ME.emails=[];
+  if(u.email) ME.emails.push(u.email.toLowerCase());
+  // best-effort: private/verified emails (needs user:email scope; ignore if denied)
+  try{
+    const er=await ghREST("/user/emails");
+    if(er.ok){
+      const arr=await er.json();
+      arr.forEach(e=>{ if(e.email) ME.emails.push(e.email.toLowerCase()); });
+    }
+  }catch(_){}
+  els.whoami.textContent="@"+ME.login;
+  log("Authenticated as @"+ME.login+(ME.name?(" ("+ME.name+")"):""), "ok");
+}
+
+// ---- ownership decision ----
+function ownership(author){
+  if(!author) return "unknown";
+  const login=author.user && author.user.login;
+  if(login && ME.login && login.toLowerCase()===ME.login.toLowerCase()) return "you";
+  if(login) return "other"; // linked to a different GitHub user
+  // no linked user — fall back to email / name heuristics
+  const email=(author.email||"").toLowerCase();
+  if(email && ME.emails.includes(email)) return "you";
+  if(ME.name && author.name && author.name.toLowerCase()===ME.name.toLowerCase()) return "you";
+  return "unknown";
+}
+
+// =================== scanning ===================
+const GQL_BRANCHES=`
+query($owner:String!,$name:String!,$cursor:String){
+  rateLimit{ remaining resetAt }
+  repository(owner:$owner,name:$name){
+    defaultBranchRef{ name }
+    refs(refPrefix:"refs/heads/", first:100, after:$cursor){
+      pageInfo{ hasNextPage endCursor }
+      nodes{
+        name
+        target{
+          __typename
+          ... on Commit{
+            committedDate
+            author{ name email user{ login } }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+async function scanRepoGraphQL(owner, name){
+  let cursor=null, defaultBranch=null;
+  const branches=[];
+  do{
+    const data=await ghGraphQL(GQL_BRANCHES, {owner, name, cursor});
+    const repo=data.data && data.data.repository;
+    if(!repo) throw {code:"norepo"};
+    defaultBranch=repo.defaultBranchRef ? repo.defaultBranchRef.name : null;
+    const refs=repo.refs;
+    refs.nodes.forEach(n=>{
+      const t=n.target;
+      const date=(t && t.committedDate)?new Date(t.committedDate):null;
+      const author=(t && t.author)?t.author:null;
+      branches.push({ name:n.name, date, author });
+    });
+    cursor = refs.pageInfo.hasNextPage ? refs.pageInfo.endCursor : null;
+  }while(cursor);
+  return {defaultBranch, branches};
+}
+
+// REST fallback (per-branch date lookup)
+async function scanRepoREST(owner, name){
+  // default branch
+  const r=await ghREST(`/repos/${owner}/${name}`);
+  if(r.status===404) throw {code:404};
+  if(!r.ok) throw {code:r.status};
+  const meta=await r.json();
+  const defaultBranch=meta.default_branch;
+  // list branches (paginated)
+  const list=[];
+  let page=1;
+  while(true){
+    const br=await ghREST(`/repos/${owner}/${name}/branches?per_page=100&page=${page}`);
+    if(!br.ok) throw {code:br.status};
+    const arr=await br.json();
+    arr.forEach(b=>list.push(b.name));
+    if(arr.length<100) break;
+    page++;
+  }
+  const branches=[];
+  await runPool(list, 6, async bn=>{
+    const d=await ghREST(`/repos/${owner}/${name}/branches/${encodeURIComponent(bn)}`);
+    if(!d.ok){ branches.push({name:bn,date:null,author:null}); return; }
+    const j=await d.json();
+    const c=j.commit && j.commit.commit;
+    const date=c && c.author && c.author.date ? new Date(c.author.date) : null;
+    const ghUser=j.commit && j.commit.author ? {login:j.commit.author.login} : null;
+    const author=c && c.author ? {name:c.author.name,email:c.author.email,user:ghUser} : null;
+    branches.push({name:bn,date,author});
+  });
+  return {defaultBranch, branches};
+}
+
+// merged-into-default, best-effort, concurrency limited
+async function fillMergedStatus(owner, name, defaultBranch, branches){
+  const targets=branches.filter(b=>b.name!==defaultBranch);
+  await runPool(targets, 5, async b=>{
+    try{
+      const res=await ghREST(`/repos/${owner}/${name}/compare/${encodeURIComponent(defaultBranch)}...${encodeURIComponent(b.name)}?per_page=1`);
+      if(!res.ok){ b.merged="unknown"; return; }
+      const j=await res.json();
+      b.merged = (j.ahead_by===0) ? "merged" : "unmerged";
+    }catch(_){ b.merged="unknown"; }
+    const cell=document.querySelector(`[data-merged="${cssId(owner,name,b.name)}"]`);
+    if(cell) cell.innerHTML=mergedTag(b.merged);
+  });
+}
+
+function cssId(owner,name,branch){ return btoa(unescape(encodeURIComponent(owner+"/"+name+"#"+branch))).replace(/=/g,""); }
+function mergedTag(m){
+  if(m==="merged") return '<span class="tag merged">✓ merged</span>';
+  if(m==="unmerged") return '<span class="tag unmerged">● unmerged</span>';
+  return '<span class="tag unknown">—</span>';
+}
+
+// =================== main load ===================
+async function loadBranches(){
+  if(DELETING) return;
+  clearBanner();
+  els.log.innerHTML=""; els.log.style.display="none";
+  PAT=els.pat.value.trim();
+  if(!PAT){ banner("Enter a Personal Access Token first.","error"); return; }
+
+  const repoLines=els.repos.value.split("\n").map(s=>s.trim()).filter(Boolean);
+  if(!repoLines.length){ banner("Add at least one owner/repo line.","error"); return; }
+
+  const ageMonths=Math.max(0, Number(els.age.value)||0);
+  const threshold=Date.now()-ageMonths*MS_PER_MONTH;
+
+  els.loadBtn.disabled=true;
+  els.loadBtn.innerHTML='<span class="spin"></span> Loading…';
+  els.results.style.display="none";
+  els.results.innerHTML="";
+  els.actionbar.style.display="none";
+  SCAN=[];
+
+  try{
+    await loadMe();
+  }catch(e){
+    failAuth(e);
+    return resetLoadBtn();
+  }
+
+  let useGraphQL=true;
+  for(const line of repoLines){
+    const m=line.match(/^([^/\s]+)\/([^/\s]+)$/);
+    if(!m){ log("Skipping malformed entry: "+line,"warn"); continue; }
+    const owner=m[1], name=m[2];
+    log("Scanning "+owner+"/"+name+" …");
+    let result=null;
+    if(useGraphQL){
+      try{
+        result=await scanRepoGraphQL(owner,name);
+      }catch(e){
+        if(e.code===401){ failAuth(e); return resetLoadBtn(); }
+        if(e.code==="gql"){
+          log("GraphQL unavailable for this token — falling back to REST.","warn");
+          useGraphQL=false;
+        }else if(e.code==="norepo"){
+          log("✗ "+owner+"/"+name+": not found or no access.","err"); continue;
+        }
+      }
+    }
+    if(!result){
+      try{
+        result=await scanRepoREST(owner,name);
+      }catch(e){
+        if(e.code===401){ failAuth(e); return resetLoadBtn(); }
+        if(e.code===404){ log("✗ "+owner+"/"+name+": not found or no access (404).","err"); }
+        else if(e.code===403){ log("✗ "+owner+"/"+name+": forbidden / rate-limited (403).","err"); }
+        else{ log("✗ "+owner+"/"+name+": error "+(e.code||"?")+".","err"); }
+        continue;
+      }
+    }
+
+    // annotate
+    const def=(result.defaultBranch||"").toLowerCase();
+    result.branches.forEach(b=>{
+      const low=b.name.toLowerCase();
+      b.isDefault = low===def;
+      b.isProtected = PROTECTED.has(low) || b.isDefault;
+      b.own = ownership(b.author);
+      b.isMine = b.own==="you";
+      b.stale = b.date ? (b.date.getTime() < threshold) : false;
+      b.eligible = b.isMine && !b.isProtected; // deletable at all
+      b.merged="pending";
+    });
+    SCAN.push({owner, repo:name, defaultBranch:result.defaultBranch, branches:result.branches});
+    log("✓ "+owner+"/"+name+": "+result.branches.length+" branches","ok");
+
+    if(rlState.restRemaining!==null && rlState.restRemaining<=2){
+      banner("GitHub REST rate limit nearly exhausted — stopping scan. Resets at "+resetTime(rlState.restReset)+".","error");
+      break;
+    }
+  }
+
+  renderResults(ageMonths);
+  resetLoadBtn();
+
+  // merged status, best-effort, after render
+  for(const r of SCAN){
+    fillMergedStatus(r.owner, r.repo, r.defaultBranch, r.branches);
+  }
+}
+
+function failAuth(e){
+  if(e.code===401) banner("Token rejected (401). Check the PAT is valid and not expired.","error");
+  else banner(e.msg||("Request failed ("+(e.code||"?")+").") ,"error");
+}
+function resetLoadBtn(){
+  els.loadBtn.disabled=false;
+  els.loadBtn.innerHTML="▸ Load branches";
+}
+
+// =================== rendering ===================
+function renderResults(ageMonths){
+  els.results.innerHTML="";
+  const showOthers=els.showOthers.checked;
+  let anyVisible=false, totalMine=0, totalStaleMine=0;
+
+  SCAN.forEach(r=>{
+    let rows=r.branches.slice().sort((a,b)=>{
+      // mine+stale first, then by oldest
+      const am=(a.eligible?0:1), bm=(b.eligible?0:1);
+      if(am!==bm) return am-bm;
+      const ad=a.date?a.date.getTime():Infinity, bd=b.date?b.date.getTime():Infinity;
+      return ad-bd;
+    });
+    if(!showOthers) rows=rows.filter(b=>b.isMine || b.isProtected);
+
+    const mineCount=r.branches.filter(b=>b.eligible).length;
+    const staleMine=r.branches.filter(b=>b.eligible && b.stale).length;
+    totalMine+=mineCount; totalStaleMine+=staleMine;
+
+    const block=document.createElement("div");
+    block.className="repo-block";
+    block.innerHTML=`
+      <div class="repo-head">
+        <div class="repo-name"><span class="owner">${esc(r.owner)}/</span>${esc(r.repo)}</div>
+        <div class="repo-meta">
+          <span class="chip def">default: ${esc(r.defaultBranch||"?")}</span>
+          <span class="chip">${r.branches.length} branches</span>
+          <span class="chip mine">${mineCount} yours</span>
+          <span class="chip stale">${staleMine} stale &amp; yours</span>
+        </div>
+      </div>
+      <div class="repo-toolbar">
+        <button data-act="all" data-repo="${esc(r.owner)}/${esc(r.repo)}">Select all eligible</button>
+        <button data-act="stale" data-repo="${esc(r.owner)}/${esc(r.repo)}">Select stale only</button>
+        <button data-act="none" data-repo="${esc(r.owner)}/${esc(r.repo)}">Clear</button>
+      </div>`;
+
+    if(!rows.length){
+      const e=document.createElement("div");
+      e.className="empty-repo";
+      e.textContent=showOthers?"No branches found.":"No branches owned by you in this repo. Enable “Show branches owned by others”.";
+      block.appendChild(e);
+    }else{
+      const scroll=document.createElement("div");
+      scroll.className="tbl-scroll";
+      const tbl=document.createElement("table");
+      tbl.innerHTML=`<thead><tr>
+        <th style="width:34px"></th>
+        <th>Branch</th>
+        <th>Last commit</th>
+        <th>Age</th>
+        <th>Author</th>
+        <th>Merged?</th>
+        <th>Eligibility</th>
+        <th>Status</th>
+      </tr></thead>`;
+      const tb=document.createElement("tbody");
+      rows.forEach(b=>{
+        const id=cssId(r.owner,r.repo,b.name);
+        const tr=document.createElement("tr");
+        if(b.eligible) tr.className="row-mine";
+        const checkable=b.eligible;
+        const checked=b.eligible && b.stale;
+        let eligTag;
+        if(b.isProtected) eligTag='<span class="tag protected">'+(b.isDefault?"default · locked":"protected")+'</span>';
+        else if(b.own==="other") eligTag='<span class="tag notyours">not yours</span>';
+        else if(b.own==="unknown") eligTag='<span class="tag notyours">author unknown</span>';
+        else eligTag='<span class="tag yours">yours</span>';
+
+        tr.innerHTML=`
+          <td><input type="checkbox" data-id="${id}"
+              data-owner="${esc(r.owner)}" data-repo="${esc(r.repo)}" data-branch="${esc(b.name)}"
+              ${checkable?"":"disabled"} ${checked?"checked":""}></td>
+          <td class="bname">${esc(b.name)}</td>
+          <td class="b-date">${b.date?fmtDate(b.date):"—"}</td>
+          <td class="b-age ${b.stale?"old":""}">${b.date?fmtAge(b.date):"—"}</td>
+          <td class="b-author">${esc(b.author && (b.author.user&&b.author.user.login||b.author.name) || "—")}</td>
+          <td data-merged="${id}">${b.isDefault?'<span class="tag unknown">—</span>':'<span class="spin"></span>'}</td>
+          <td>${eligTag}</td>
+          <td class="b-status" data-status="${id}"></td>`;
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(tb);
+      scroll.appendChild(tbl);
+      block.appendChild(scroll);
+      anyVisible=true;
+    }
+    els.results.appendChild(block);
+  });
+
+  els.results.style.display="block";
+
+  if(!anyVisible && totalMine===0){
+    banner("Scan complete — found no branches you own across these repos. (Ownership = latest commit on the branch is authored by @"+ME.login+".)","info");
+  }else{
+    banner("Scan complete · "+totalStaleMine+" of your branches are older than "+ageMonths+" month(s) and pre-selected.","info");
+  }
+
+  // wire checkboxes + toolbars
+  els.results.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.addEventListener("change",updateSelection));
+  els.results.querySelectorAll('.repo-toolbar button').forEach(btn=>btn.addEventListener("click",()=>repoBulk(btn.dataset.repo,btn.dataset.act)));
+  updateSelection();
+}
+
+function repoBulk(repoKey, act){
+  els.results.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+    if(cb.disabled) return;
+    if((cb.dataset.owner+"/"+cb.dataset.repo)!==repoKey) return;
+    const tr=cb.closest("tr");
+    if(act==="all") cb.checked=true;
+    else if(act==="none") cb.checked=false;
+    else if(act==="stale"){
+      const ageCell=tr.querySelector(".b-age");
+      cb.checked=ageCell.classList.contains("old");
+    }
+  });
+  updateSelection();
+}
+
+// =================== selection ===================
+function selectedTargets(){
+  const out=[];
+  els.results.querySelectorAll('input[type=checkbox]:checked').forEach(cb=>{
+    if(cb.disabled) return;
+    out.push({owner:cb.dataset.owner, repo:cb.dataset.repo, branch:cb.dataset.branch, id:cb.dataset.id});
+  });
+  return out;
+}
+// hard re-validation: never trust the checkbox alone
+function safeTargets(){
+  const raw=selectedTargets();
+  return raw.filter(t=>{
+    const rec=SCAN.find(r=>r.owner===t.owner && r.repo===t.repo);
+    if(!rec) return false;
+    const b=rec.branches.find(x=>x.name===t.branch);
+    return b && b.eligible && !b.isProtected && b.isMine;
+  });
+}
+function updateSelection(){
+  const n=safeTargets().length;
+  els.selCount.textContent=n;
+  els.deleteBtn.disabled=(n===0)||DELETING;
+  els.actionbar.style.display = n>0 ? "flex" : "none";
+}
+
+// =================== delete flow ===================
+function openModal(){
+  const targets=safeTargets();
+  if(!targets.length) return;
+  els.mCount.textContent=targets.length;
+  // group by repo
+  const byRepo={};
+  targets.forEach(t=>{ (byRepo[t.owner+"/"+t.repo] ||= []).push(t.branch); });
+  els.modalList.innerHTML="";
+  Object.entries(byRepo).forEach(([repo,branches])=>{
+    const h=document.createElement("div"); h.className="mrepo"; h.textContent=repo+" · "+branches.length;
+    els.modalList.appendChild(h);
+    branches.forEach(b=>{
+      const d=document.createElement("div"); d.className="mb"; d.textContent=b;
+      els.modalList.appendChild(d);
+    });
+  });
+  els.confirmType.value="";
+  els.confirmBtn.disabled=true;
+  els.modalBg.style.display="flex";
+  els.confirmType.focus();
+}
+function closeModal(){ els.modalBg.style.display="none"; }
+
+async function runDelete(){
+  const targets=safeTargets();
+  if(!targets.length){ closeModal(); return; }
+  DELETING=true;
+  closeModal();
+  els.deleteBtn.disabled=true;
+  els.loadBtn.disabled=true;
+  banner("Deleting "+targets.length+" branch(es)…","info");
+
+  let ok=0, fail=0;
+  await runPool(targets, 3, async t=>{
+    const cell=document.querySelector(`[data-status="${t.id}"]`);
+    if(cell){ cell.className="b-status pending"; cell.innerHTML='<span class="spin"></span> deleting'; }
+    try{
+      const res=await ghREST(`/repos/${t.owner}/${t.repo}/git/refs/heads/${encodeURIComponent(t.branch)}`, {method:"DELETE"});
+      if(res.status===204){
+        ok++; markStatus(t,"ok","✓ deleted");
+        const cb=document.querySelector(`input[data-id="${t.id}"]`);
+        if(cb){ cb.checked=false; cb.disabled=true; }
+      }else if(res.status===404){
+        ok++; markStatus(t,"ok","already gone");
+      }else if(res.status===403){
+        fail++; markStatus(t,"err","✗ forbidden (403)");
+      }else if(res.status===422){
+        fail++; markStatus(t,"err","✗ protected (422)");
+      }else{
+        fail++; markStatus(t,"err","✗ error "+res.status);
+      }
+    }catch(err){
+      fail++; markStatus(t,"err","✗ network error");
+    }
+    if(rlState.restRemaining!==null && rlState.restRemaining<=1){
+      banner("Rate limit hit during deletion — remaining branches not processed. Resets at "+resetTime(rlState.restReset)+".","error");
+    }
+  });
+
+  DELETING=false;
+  els.loadBtn.disabled=false;
+  banner("Done · "+ok+" deleted"+(fail?(" · "+fail+" failed"):"")+".", fail?"error":"info");
+  updateSelection();
+}
+function markStatus(t, cls, txt){
+  const cell=document.querySelector(`[data-status="${t.id}"]`);
+  if(cell){ cell.className="b-status "+cls; cell.textContent=txt; }
+}
+
+// =================== wiring ===================
+els.loadBtn.addEventListener("click", loadBranches);
+els.clearBtn.addEventListener("click", ()=>{
+  PAT=""; ME={login:null,name:null,emails:[]}; SCAN=[];
+  els.pat.value=""; els.repos.value=""; els.age.value="6";
+  els.results.style.display="none"; els.results.innerHTML="";
+  els.actionbar.style.display="none"; clearBanner();
+  els.log.innerHTML=""; els.log.style.display="none";
+  els.whoami.textContent="—"; els.rlRest.textContent="—"; els.rlGql.textContent="—"; els.rlReset.textContent="—";
+});
+els.showOthers.addEventListener("change", ()=>{ if(SCAN.length) renderResults(Math.max(0,Number(els.age.value)||0)); });
+els.deleteBtn.addEventListener("click", openModal);
+els.cancelBtn.addEventListener("click", closeModal);
+els.modalBg.addEventListener("click", e=>{ if(e.target===els.modalBg) closeModal(); });
+els.confirmType.addEventListener("input", ()=>{ els.confirmBtn.disabled = els.confirmType.value!=="DELETE"; });
+els.confirmBtn.addEventListener("click", runDelete);
+document.addEventListener("keydown", e=>{ if(e.key==="Escape" && els.modalBg.style.display==="flex") closeModal(); });
+
+/* ============================================================
+   ADDITIVE: STALE PULL REQUEST MODULE
+   Reuses ghREST, ghGraphQL, runPool, banner, log, ME, PAT,
+   rlState, esc, fmtAge, fmtDate, MS_PER_MONTH, PROTECTED, cssId.
+   Does not modify any branch function above.
+   ============================================================ */
+let PR_SCAN=[];        // [{owner, repo, writable, repoDefault, prs:[...]}]
+let PR_DELETING=false;
+let PR_ACTION=null;    // 'label' | 'comment' | 'close'
+
+const pels={
+  modeBranches:$("modeBranches"), modePR:$("modePR"),
+  prControls:$("prControls"), loadPrBtn:$("loadPrBtn"), prCsvBtn:$("prCsvBtn"),
+  prClearBtn:$("prClearBtn"), prMineOnly:$("prMineOnly"),
+  prLabelName:$("prLabelName"), prCommentTpl:$("prCommentTpl"), prDeleteHead:$("prDeleteHead"),
+  prScopeNote:$("prScopeNote"),
+  prResults:$("prResults"), prActionbar:$("prActionbar"), prSelCount:$("prSelCount"),
+  prLabelBtn:$("prLabelBtn"), prCommentBtn:$("prCommentBtn"), prCloseBtn:$("prCloseBtn"),
+  prModalBg:$("prModalBg"), prModalTitle:$("prModalTitle"), prModalDesc:$("prModalDesc"),
+  prModalList:$("prModalList"), prConfirmType:$("prConfirmType"),
+  prConfirmBtn:$("prConfirmBtn"), prCancelBtn:$("prCancelBtn")
+};
+const WRITABLE=new Set(["WRITE","ADMIN","MAINTAIN"]);
+
+// ---------- mode switching ----------
+function setMode(pr){
+  pels.modeBranches.classList.toggle("active",!pr);
+  pels.modePR.classList.toggle("active",pr);
+  els.loadBtn.style.display = pr?"none":"";
+  const soLabel=els.showOthers.closest("label"); if(soLabel) soLabel.style.display = pr?"none":"";
+  els.clearBtn.style.display = pr?"none":"";
+  pels.prControls.classList.toggle("show",pr);
+  els.results.style.display = (!pr && SCAN.length) ? "block" : "none";
+  pels.prResults.style.display = (pr && PR_SCAN.length) ? "block" : "none";
+  if(pr){ $("actionbar").style.display="none"; updatePrSelection(); }
+  else { pels.prActionbar.style.display="none"; updateSelection(); }
+}
+pels.modeBranches.addEventListener("click",()=>setMode(false));
+pels.modePR.addEventListener("click",()=>setMode(true));
+
+// ---------- PR scan ----------
+const GQL_PRS=`
+query($owner:String!,$name:String!,$cursor:String){
+  rateLimit{ remaining resetAt }
+  repository(owner:$owner,name:$name){
+    viewerPermission
+    defaultBranchRef{ name }
+    pullRequests(states:OPEN, first:50, after:$cursor, orderBy:{field:UPDATED_AT, direction:ASC}){
+      pageInfo{ hasNextPage endCursor }
+      nodes{
+        number title isDraft createdAt updatedAt
+        baseRefName headRefName mergeable reviewDecision isCrossRepository
+        author{ login }
+        labels(first:20){ nodes{ name } }
+        commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
+      }
+    }
+  }
+}`;
+
+async function scanPRsGraphQL(owner,name){
+  let cursor=null, viewerPermission=null, repoDefault=null;
+  const prs=[];
+  do{
+    const data=await ghGraphQL(GQL_PRS,{owner,name,cursor});
+    const repo=data.data && data.data.repository;
+    if(!repo) throw {code:"norepo"};
+    viewerPermission=repo.viewerPermission;
+    repoDefault=repo.defaultBranchRef?repo.defaultBranchRef.name:null;
+    const pr=repo.pullRequests;
+    pr.nodes.forEach(n=>{
+      const ci=(n.commits.nodes[0] && n.commits.nodes[0].commit.statusCheckRollup)
+        ? n.commits.nodes[0].commit.statusCheckRollup.state : null;
+      prs.push({
+        number:n.number, title:n.title, isDraft:n.isDraft,
+        createdAt:new Date(n.createdAt), updatedAt:new Date(n.updatedAt),
+        baseRefName:n.baseRefName, headRefName:n.headRefName,
+        mergeable:n.mergeable, reviewDecision:n.reviewDecision,
+        isCrossRepository:n.isCrossRepository,
+        author:n.author?{login:n.author.login}:null,
+        labels:n.labels.nodes.map(l=>l.name), ci
+      });
+    });
+    cursor=pr.pageInfo.hasNextPage?pr.pageInfo.endCursor:null;
+  }while(cursor);
+  return {viewerPermission, repoDefault, prs};
+}
+
+async function scanPRsREST(owner,name){
+  const r=await ghREST(`/repos/${owner}/${name}`);
+  if(r.status===404) throw {code:404};
+  if(!r.ok) throw {code:r.status};
+  const meta=await r.json();
+  const repoDefault=meta.default_branch;
+  const writable=meta.permissions && meta.permissions.push===true;
+  const prs=[]; let page=1;
+  while(true){
+    const pr=await ghREST(`/repos/${owner}/${name}/pulls?state=open&per_page=100&sort=updated&direction=asc&page=${page}`);
+    if(!pr.ok) throw {code:pr.status};
+    const arr=await pr.json();
+    arr.forEach(p=>prs.push({
+      number:p.number, title:p.title, isDraft:p.draft,
+      createdAt:new Date(p.created_at), updatedAt:new Date(p.updated_at),
+      baseRefName:p.base.ref, headRefName:p.head.ref,
+      mergeable:null, reviewDecision:null,
+      isCrossRepository: p.head.repo ? (p.head.repo.full_name!==`${owner}/${name}`) : true,
+      author:p.user?{login:p.user.login}:null,
+      labels:(p.labels||[]).map(l=>l.name), ci:null
+    }));
+    if(arr.length<100) break;
+    page++;
+  }
+  return {viewerPermission: writable?"WRITE":"READ", repoDefault, prs};
+}
+
+async function loadPRs(){
+  if(PR_DELETING) return;
+  clearBanner();
+  els.log.innerHTML=""; els.log.style.display="none";
+  PAT=els.pat.value.trim();
+  if(!PAT){ banner("Enter a Personal Access Token first.","error"); return; }
+  const repoLines=els.repos.value.split("\n").map(s=>s.trim()).filter(Boolean);
+  if(!repoLines.length){ banner("Add at least one owner/repo line.","error"); return; }
+  const ageMonths=Math.max(0,Number(els.age.value)||0);
+  const threshold=Date.now()-ageMonths*MS_PER_MONTH;
+
+  pels.loadPrBtn.disabled=true;
+  pels.loadPrBtn.innerHTML='<span class="spin"></span> Loading…';
+  pels.prResults.style.display="none"; pels.prResults.innerHTML="";
+  pels.prActionbar.style.display="none";
+  pels.prScopeNote.style.display="none";
+  PR_SCAN=[];
+
+  if(!ME.login){
+    try{ await loadMe(); }catch(e){ failAuth(e); return resetPrBtn(); }
+  }
+
+  let useGraphQL=true;
+  for(const line of repoLines){
+    const m=line.match(/^([^/\s]+)\/([^/\s]+)$/);
+    if(!m){ log("Skipping malformed entry: "+line,"warn"); continue; }
+    const owner=m[1], name=m[2];
+    log("Scanning PRs in "+owner+"/"+name+" …");
+    let result=null;
+    if(useGraphQL){
+      try{ result=await scanPRsGraphQL(owner,name); }
+      catch(e){
+        if(e.code===401){ failAuth(e); return resetPrBtn(); }
+        if(e.code==="gql"){ log("GraphQL unavailable — falling back to REST for PRs.","warn"); useGraphQL=false; }
+        else if(e.code==="norepo"){ log("✗ "+owner+"/"+name+": not found or no access.","err"); continue; }
+      }
+    }
+    if(!result){
+      try{ result=await scanPRsREST(owner,name); }
+      catch(e){
+        if(e.code===401){ failAuth(e); return resetPrBtn(); }
+        if(e.code===404) log("✗ "+owner+"/"+name+": not found or no access (404).","err");
+        else if(e.code===403) log("✗ "+owner+"/"+name+": forbidden / rate-limited (403).","err");
+        else log("✗ "+owner+"/"+name+": error "+(e.code||"?")+".","err");
+        continue;
+      }
+    }
+    const writable=WRITABLE.has(result.viewerPermission);
+    result.prs.forEach(p=>{
+      p.mine = p.author && ME.login && p.author.login.toLowerCase()===ME.login.toLowerCase();
+      p.stale = p.updatedAt ? (p.updatedAt.getTime()<threshold) : false;
+      p.writable = writable;
+      p.repoDefault = result.repoDefault;
+    });
+    PR_SCAN.push({owner, repo:name, writable, repoDefault:result.repoDefault, prs:result.prs});
+    log("✓ "+owner+"/"+name+": "+result.prs.length+" open PRs"+(writable?"":" (read-only)"),"ok");
+    if(rlState.restRemaining!==null && rlState.restRemaining<=2){
+      banner("GitHub rate limit nearly exhausted — stopping scan. Resets at "+resetTime(rlState.restReset)+".","error");
+      break;
+    }
+  }
+
+  renderPRs(ageMonths);
+  resetPrBtn();
+  annotateBranchesWithPRs();
+
+  const anyWritable=PR_SCAN.some(r=>r.writable);
+  if(PR_SCAN.length && !anyWritable){
+    pels.prScopeNote.textContent="Your token has no write access to any of these repos — label / comment / close actions are disabled. Scanning still works read-only.";
+    pels.prScopeNote.style.display="block";
+  }
+}
+function resetPrBtn(){ pels.loadPrBtn.disabled=false; pels.loadPrBtn.innerHTML="▸ Load pull requests"; }
+
+// ---------- render ----------
+function prVisible(p){ return pels.prMineOnly.checked ? p.mine : true; }
+function reviewTag(d){
+  if(d==="APPROVED") return '<span class="tag rev-approved">approved</span>';
+  if(d==="CHANGES_REQUESTED") return '<span class="tag rev-changes">changes</span>';
+  if(d==="REVIEW_REQUIRED") return '<span class="tag rev-required">review req</span>';
+  return '<span class="tag unknown">—</span>';
+}
+function ciTag(s){
+  if(s==="SUCCESS") return '<span class="tag ci-success">✓ ci</span>';
+  if(s==="FAILURE"||s==="ERROR") return '<span class="tag ci-failure">✗ ci</span>';
+  if(s==="PENDING"||s==="EXPECTED") return '<span class="tag ci-pending">● ci</span>';
+  return '<span class="tag ci-none">—</span>';
+}
+
+function renderPRs(ageMonths){
+  pels.prResults.innerHTML="";
+  let anyVisible=false, totalMine=0, totalStaleMine=0;
+
+  PR_SCAN.forEach(r=>{
+    let rows=r.prs.slice().sort((a,b)=>{
+      const am=(a.mine?0:1), bm=(b.mine?0:1);
+      if(am!==bm) return am-bm;
+      return (a.updatedAt?a.updatedAt.getTime():Infinity)-(b.updatedAt?b.updatedAt.getTime():Infinity);
+    });
+    if(pels.prMineOnly.checked) rows=rows.filter(p=>p.mine);
+
+    const mineCount=r.prs.filter(p=>p.mine).length;
+    const staleMine=r.prs.filter(p=>p.mine && p.stale).length;
+    totalMine+=mineCount; totalStaleMine+=staleMine;
+
+    const block=document.createElement("div");
+    block.className="repo-block";
+    block.innerHTML=`
+      <div class="repo-head">
+        <div class="repo-name"><span class="owner">${esc(r.owner)}/</span>${esc(r.repo)}</div>
+        <div class="repo-meta">
+          <span class="chip ${r.writable?'mine':''}">${r.writable?'write access':'read-only'}</span>
+          <span class="chip">${r.prs.length} open PRs</span>
+          <span class="chip mine">${mineCount} yours</span>
+          <span class="chip stale">${staleMine} stale &amp; yours</span>
+        </div>
+      </div>
+      <div class="repo-toolbar">
+        <button data-pact="all" data-repo="${esc(r.owner)}/${esc(r.repo)}">Select all shown</button>
+        <button data-pact="stale" data-repo="${esc(r.owner)}/${esc(r.repo)}">Select stale &amp; mine</button>
+        <button data-pact="none" data-repo="${esc(r.owner)}/${esc(r.repo)}">Clear</button>
+      </div>`;
+
+    if(!rows.length){
+      const e=document.createElement("div");
+      e.className="empty-repo";
+      e.textContent=pels.prMineOnly.checked?"No open PRs you authored in this repo. Untick “Only PRs I authored” to see all.":"No open PRs in this repo.";
+      block.appendChild(e);
+    }else{
+      const scroll=document.createElement("div"); scroll.className="tbl-scroll";
+      const tbl=document.createElement("table");
+      tbl.innerHTML=`<thead><tr>
+        <th style="width:34px"></th><th>PR</th><th>Title</th><th>Author</th>
+        <th>Last activity</th><th>Base ← head</th><th>State</th><th>Review</th>
+        <th>CI</th><th>Mine?</th><th>Status</th>
+      </tr></thead>`;
+      const tb=document.createElement("tbody");
+      rows.forEach(p=>{
+        const id=cssId(r.owner,r.repo,"pr"+p.number);
+        const tr=document.createElement("tr");
+        if(p.mine) tr.className="row-mine";
+        const checked=p.mine && p.stale;
+        const stateTag=p.isDraft?'<span class="tag draft">draft</span>':'<span class="tag ready">ready</span>';
+        const mineTag=p.mine?'<span class="tag yours">yours</span>'
+          :(p.writable?'<span class="tag notyours">other</span>':'<span class="tag nowrite">read-only</span>');
+        tr.innerHTML=`
+          <td><input type="checkbox" data-id="${id}"
+              data-owner="${esc(r.owner)}" data-repo="${esc(r.repo)}" data-num="${p.number}"></td>
+          <td><span class="prnum">#${p.number}</span></td>
+          <td class="bname"><div class="prtitle" title="${esc(p.title)}">${esc(p.title)}</div></td>
+          <td class="b-author">${esc(p.author?p.author.login:"—")}</td>
+          <td class="b-age ${p.stale?'old':''}">${p.updatedAt?fmtAge(p.updatedAt):'—'} <span style="color:var(--txt-faint)">(${p.updatedAt?fmtDate(p.updatedAt):'—'})</span></td>
+          <td class="b2h">${esc(p.baseRefName)} <span class="h">← ${esc(p.headRefName)}</span></td>
+          <td>${stateTag}</td>
+          <td>${reviewTag(p.reviewDecision)}</td>
+          <td>${ciTag(p.ci)}</td>
+          <td>${mineTag}</td>
+          <td class="b-status" data-status="${id}"></td>`;
+        tb.appendChild(tr);
+        const cb=tr.querySelector("input"); cb.checked=checked;
+      });
+      tbl.appendChild(tb); scroll.appendChild(tbl); block.appendChild(scroll);
+      anyVisible=true;
+    }
+    pels.prResults.appendChild(block);
+  });
+
+  pels.prResults.style.display="block";
+  if(!anyVisible && totalMine===0)
+    banner("PR scan complete — no open pull requests"+(pels.prMineOnly.checked?" you authored":"")+" across these repos.","info");
+  else
+    banner("PR scan complete · "+totalStaleMine+" of your PRs are stale (>"+ageMonths+"mo) and pre-selected.","info");
+
+  pels.prResults.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.addEventListener("change",updatePrSelection));
+  pels.prResults.querySelectorAll('.repo-toolbar button').forEach(btn=>btn.addEventListener("click",()=>prRepoBulk(btn.dataset.repo,btn.dataset.pact)));
+  updatePrSelection();
+}
+
+function prRepoBulk(repoKey,act){
+  pels.prResults.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+    if((cb.dataset.owner+"/"+cb.dataset.repo)!==repoKey) return;
+    const tr=cb.closest("tr");
+    if(act==="all") cb.checked=true;
+    else if(act==="none") cb.checked=false;
+    else if(act==="stale"){
+      const ageCell=tr.querySelector(".b-age");
+      const mine=tr.querySelector(".tag.yours");
+      cb.checked = ageCell.classList.contains("old") && !!mine;
+    }
+  });
+  updatePrSelection();
+}
+
+// ---------- selection ----------
+function prSelected(){
+  const out=[];
+  pels.prResults.querySelectorAll('input[type=checkbox]:checked').forEach(cb=>{
+    const rec=PR_SCAN.find(r=>r.owner===cb.dataset.owner && r.repo===cb.dataset.repo);
+    if(!rec) return;
+    const p=rec.prs.find(x=>x.number===Number(cb.dataset.num));
+    if(p) out.push({owner:cb.dataset.owner, repo:cb.dataset.repo, number:p.number, id:cb.dataset.id, pr:p, writable:rec.writable});
+  });
+  return out;
+}
+function updatePrSelection(){
+  const sel=prSelected();
+  pels.prSelCount.textContent=sel.length;
+  const anyWritable=sel.some(s=>s.writable);
+  const lock = sel.length===0 || PR_DELETING || !anyWritable;
+  pels.prLabelBtn.disabled=lock;
+  pels.prCommentBtn.disabled=lock;
+  pels.prCloseBtn.disabled=lock;
+  pels.prActionbar.style.display = (pels.prControls.classList.contains("show") && sel.length>0) ? "flex" : "none";
+}
+
+// ---------- cross-link into branch table (read-only, additive) ----------
+function annotateBranchesWithPRs(){
+  if(!PR_SCAN.length) return;
+  const map={};
+  PR_SCAN.forEach(r=>r.prs.forEach(p=>{
+    const key=(r.owner+"/"+r.repo+"#"+p.headRefName).toLowerCase();
+    (map[key] ||= []).push(p.number);
+  }));
+  document.querySelectorAll('#results input[type=checkbox][data-branch]').forEach(cb=>{
+    const tr=cb.closest("tr"); if(!tr) return;
+    const nameCell=tr.querySelector(".bname"); if(!nameCell) return;
+    if(nameCell.querySelector(".branch-pr-flag")) return;
+    const key=(cb.dataset.owner+"/"+cb.dataset.repo+"#"+cb.dataset.branch).toLowerCase();
+    const nums=map[key];
+    if(nums && nums.length){
+      const span=document.createElement("span");
+      span.className="branch-pr-flag";
+      span.textContent="● open PR #"+nums.join(", #");
+      span.title="This branch is the head of open pull request(s). Deleting it will also remove that branch from the PR.";
+      nameCell.appendChild(span);
+    }
+  });
+}
+// re-annotate whenever the branch results re-render (no edit to renderResults needed)
+new MutationObserver(()=>{ if(PR_SCAN.length) annotateBranchesWithPRs(); })
+  .observe(els.results,{childList:true});
+
+// ---------- action modal ----------
+function headDeletable(s){
+  const p=s.pr;
+  if(!s.writable) return false;
+  if(p.isCrossRepository) return false;
+  if(!p.mine) return false;
+  const low=p.headRefName.toLowerCase();
+  if(PROTECTED.has(low)) return false;
+  if(p.repoDefault && low===p.repoDefault.toLowerCase()) return false;
+  return true;
+}
+function openPrModal(action){
+  const all=prSelected();
+  const sel=all.filter(s=>s.writable);
+  if(!sel.length) return;
+  PR_ACTION=action;
+  const skipped=all.length-sel.length;
+  let title,desc,verb;
+  if(action==="label"){ title="🏷 Add label “"+pels.prLabelName.value.trim()+"”"; verb="Label"; desc="Adds the label to "+sel.length+" PR(s). Visible to everyone on the PR."; }
+  else if(action==="comment"){ title="💬 Post nudge comment"; verb="Comment"; desc="Posts your comment template to "+sel.length+" PR(s). Visible to everyone on the PR."; }
+  else { title="⊘ Close "+sel.length+" pull request(s)"; verb="Close"; desc="Closes "+sel.length+" PR(s) (reversible — they can be reopened)."+(pels.prDeleteHead.checked?" Eligible head branches will also be deleted.":""); }
+  if(skipped>0) desc+=" "+skipped+" selected PR(s) skipped (no write access).";
+  pels.prModalTitle.textContent=title;
+  pels.prModalDesc.textContent=desc;
+  pels.prModalList.innerHTML="";
+  const byRepo={};
+  sel.forEach(s=>{ (byRepo[s.owner+"/"+s.repo] ||= []).push(s); });
+  Object.entries(byRepo).forEach(([repo,items])=>{
+    const h=document.createElement("div"); h.className="mrepo"; h.textContent=repo+" · "+items.length; pels.prModalList.appendChild(h);
+    items.forEach(s=>{
+      const d=document.createElement("div"); d.className="mb";
+      let extra="";
+      if(action==="close" && pels.prDeleteHead.checked) extra = headDeletable(s) ? "  ⟶ + delete head “"+s.pr.headRefName+"”" : "  (head kept)";
+      d.textContent="#"+s.number+"  "+s.pr.title.slice(0,60)+extra;
+      pels.prModalList.appendChild(d);
+    });
+  });
+  pels.prConfirmBtn.textContent=verb+" "+sel.length+" PR(s)";
+  pels.prConfirmType.value=""; pels.prConfirmBtn.disabled=true;
+  pels.prModalBg.style.display="flex"; pels.prConfirmType.focus();
+}
+function closePrModal(){ pels.prModalBg.style.display="none"; }
+
+async function runPrAction(){
+  const targets=prSelected().filter(s=>s.writable);
+  if(!targets.length){ closePrModal(); return; }
+  const action=PR_ACTION;
+  PR_DELETING=true; closePrModal();
+  [pels.prLabelBtn,pels.prCommentBtn,pels.prCloseBtn,pels.loadPrBtn].forEach(b=>b.disabled=true);
+  banner("Running “"+action+"” on "+targets.length+" PR(s)…","info");
+  const labelName=pels.prLabelName.value.trim()||"stale";
+  const ageMonths=Math.max(0,Number(els.age.value)||0);
+  const commentBody=pels.prCommentTpl.value.replace(/\{age\}/g,ageMonths);
+  let ok=0, fail=0;
+
+  await runPool(targets, 3, async s=>{
+    const cell=document.querySelector(`[data-status="${s.id}"]`);
+    if(cell){ cell.className="b-status pending"; cell.innerHTML='<span class="spin"></span> working'; }
+    try{
+      let res;
+      if(action==="label"){
+        res=await ghREST(`/repos/${s.owner}/${s.repo}/issues/${s.number}/labels`,
+          {method:"POST", body:JSON.stringify({labels:[labelName]})});
+        if(res.ok){ ok++; prStatus(s,"ok","✓ labeled"); } else prFail(s,res,()=>fail++);
+      }else if(action==="comment"){
+        res=await ghREST(`/repos/${s.owner}/${s.repo}/issues/${s.number}/comments`,
+          {method:"POST", body:JSON.stringify({body:commentBody})});
+        if(res.ok){ ok++; prStatus(s,"ok","✓ commented"); } else prFail(s,res,()=>fail++);
+      }else{ // close
+        res=await ghREST(`/repos/${s.owner}/${s.repo}/pulls/${s.number}`,
+          {method:"PATCH", body:JSON.stringify({state:"closed"})});
+        if(res.ok){
+          ok++;
+          let msg="✓ closed";
+          if(pels.prDeleteHead.checked && headDeletable(s)){
+            const del=await ghREST(`/repos/${s.owner}/${s.repo}/git/refs/heads/${encodeURIComponent(s.pr.headRefName)}`,{method:"DELETE"});
+            msg += (del.status===204||del.status===404) ? " + head deleted" : " (head delete failed)";
+          }
+          prStatus(s,"ok",msg);
+          const cb=document.querySelector(`input[data-id="${s.id}"]`);
+          if(cb){ cb.checked=false; cb.disabled=true; }
+        } else prFail(s,res,()=>fail++);
+      }
+    }catch(err){ fail++; prStatus(s,"err","✗ network error"); }
+    if(rlState.restRemaining!==null && rlState.restRemaining<=1)
+      banner("Rate limit hit — remaining PRs not processed. Resets at "+resetTime(rlState.restReset)+".","error");
+  });
+
+  PR_DELETING=false; pels.loadPrBtn.disabled=false;
+  banner("Done · "+ok+" succeeded"+(fail?(" · "+fail+" failed"):"")+".", fail?"error":"info");
+  updatePrSelection();
+}
+function prStatus(s,cls,txt){ const c=document.querySelector(`[data-status="${s.id}"]`); if(c){ c.className="b-status "+cls; c.textContent=txt; } }
+function prFail(s,res,inc){ inc(); const m=res.status===403?"✗ forbidden (403)":res.status===404?"✗ not found":res.status===422?"✗ rejected (422)":"✗ error "+res.status; prStatus(s,"err",m); }
+
+// ---------- CSV export ----------
+function csvCell(v){ const s=String(v==null?"":v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
+function exportPrCsv(){
+  if(!PR_SCAN.length){ banner("Load pull requests first.","error"); return; }
+  const rows=[["repo","pr","title","author","updated","age","base","head","draft","review","ci","mine","stale"]];
+  PR_SCAN.forEach(r=>r.prs.forEach(p=>{
+    if(!prVisible(p)) return;
+    rows.push([r.owner+"/"+r.repo, p.number, p.title, p.author?p.author.login:"",
+      p.updatedAt?fmtDate(p.updatedAt):"", p.updatedAt?fmtAge(p.updatedAt):"",
+      p.baseRefName, p.headRefName, p.isDraft?"draft":"ready",
+      p.reviewDecision||"", p.ci||"", p.mine?"yes":"no", p.stale?"yes":"no"]);
+  }));
+  const csv=rows.map(r=>r.map(csvCell).join(",")).join("\n");
+  const blob=new Blob([csv],{type:"text/csv"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download="stale-prs.csv";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+
+// ---------- PR wiring ----------
+pels.loadPrBtn.addEventListener("click",loadPRs);
+pels.prCsvBtn.addEventListener("click",exportPrCsv);
+pels.prClearBtn.addEventListener("click",()=>{
+  PR_SCAN=[]; pels.prResults.style.display="none"; pels.prResults.innerHTML="";
+  pels.prActionbar.style.display="none"; pels.prScopeNote.style.display="none"; clearBanner();
+});
+pels.prMineOnly.addEventListener("change",()=>{ if(PR_SCAN.length) renderPRs(Math.max(0,Number(els.age.value)||0)); });
+pels.prLabelBtn.addEventListener("click",()=>openPrModal("label"));
+pels.prCommentBtn.addEventListener("click",()=>openPrModal("comment"));
+pels.prCloseBtn.addEventListener("click",()=>openPrModal("close"));
+pels.prCancelBtn.addEventListener("click",closePrModal);
+pels.prModalBg.addEventListener("click",e=>{ if(e.target===pels.prModalBg) closePrModal(); });
+pels.prConfirmType.addEventListener("input",()=>{ pels.prConfirmBtn.disabled = pels.prConfirmType.value!=="CONFIRM"; });
+pels.prConfirmBtn.addEventListener("click",runPrAction);
+document.addEventListener("keydown",e=>{ if(e.key==="Escape" && pels.prModalBg.style.display==="flex") closePrModal(); });
+
+/* ============================================================
+   ADDITIVE: ACTIONS STORAGE CLEANUP MODULE
+   Reuses ghREST, runPool, banner, log, esc, fmtAge, fmtDate,
+   rlState, resetTime, MS_PER_MONTH, csvCell. Adds a third tab.
+   Does not modify any branch or PR function above; tab
+   coordination uses extra event listeners only.
+   ============================================================ */
+let ACT_SCAN=[];       // [{owner, repo, items:[{kind,id,name,detail,date,size,stale}], truncated, noAccess}]
+let ACT_BUSY=false;
+const ACT_PAGE_CAP=4;  // max pages per list per repo (4*100 items)
+
+const aels={
+  mode:$("modeActions"), controls:$("actControls"),
+  runs:$("actRuns"), artifacts:$("actArtifacts"), caches:$("actCaches"),
+  loadBtn:$("loadActBtn"), csvBtn:$("actCsvBtn"), clearBtn:$("actClearBtn"),
+  scopeNote:$("actScopeNote"), results:$("actResults"),
+  actionbar:$("actActionbar"), selCount:$("actSelCount"), selSize:$("actSelSize"),
+  deleteBtn:$("actDeleteBtn"), modalBg:$("actModalBg"), modalDesc:$("actModalDesc"),
+  modalList:$("actModalList"), confirmType:$("actConfirmType"),
+  confirmBtn:$("actConfirmBtn"), cancelBtn:$("actCancelBtn")
+};
+
+function fmtBytes(n){
+  if(n==null) return "—";
+  if(n<1024) return n+" B";
+  const u=["KB","MB","GB","TB"]; let i=-1;
+  do{ n/=1024; i++; }while(n>=1024 && i<u.length-1);
+  return n.toFixed(n>=10?0:1)+" "+u[i];
+}
+
+// ---------- tab coordination (additive listeners only) ----------
+function actShow(on){
+  aels.mode.classList.toggle("active",on);
+  aels.controls.classList.toggle("show",on);
+  aels.results.style.display=(on && ACT_SCAN.length)?"block":"none";
+  aels.actionbar.style.display="none";
+  if(on){
+    // hide branch UI (setMode(false) side effects) without touching setMode
+    pels.modeBranches.classList.remove("active");
+    pels.modePR.classList.remove("active");
+    els.loadBtn.style.display="none";
+    const so=els.showOthers.closest("label"); if(so) so.style.display="none";
+    els.clearBtn.style.display="none";
+    els.results.style.display="none";
+    $("actionbar").style.display="none";
+    pels.prControls.classList.remove("show");
+    pels.prResults.style.display="none";
+    pels.prActionbar.style.display="none";
+    updateActSelection();
+  }
+}
+aels.mode.addEventListener("click",()=>actShow(true));
+// leaving Actions mode: existing setMode handlers restore branch/PR UI; we just hide ours
+pels.modeBranches.addEventListener("click",()=>actShow(false));
+pels.modePR.addEventListener("click",()=>actShow(false));
+
+// ---------- scan ----------
+async function actPaged(path, key, cap){
+  // returns {items:[...], truncated:bool, status:number|null}
+  const out=[]; let page=1, truncated=false;
+  while(page<=cap){
+    const res=await ghREST(path+(path.includes("?")?"&":"?")+"per_page=100&page="+page);
+    if(!res.ok) return {items:null, truncated:false, status:res.status};
+    const j=await res.json();
+    const arr=j[key]||[];
+    out.push(...arr);
+    const total=j.total_count!=null?j.total_count:out.length;
+    if(arr.length<100){ break; }
+    if(page===cap && total>out.length) truncated=true;
+    page++;
+  }
+  return {items:out, truncated, status:null};
+}
+
+async function loadActions(){
+  if(ACT_BUSY||DELETING||PR_DELETING) return;
+  clearBanner(); els.log.innerHTML=""; els.log.style.display="none";
+  PAT=els.pat.value.trim();
+  if(!PAT){ banner("Enter a Personal Access Token first.","error"); return; }
+  const repoLines=els.repos.value.split("\n").map(s=>s.trim()).filter(Boolean);
+  if(!repoLines.length){ banner("Add at least one owner/repo line.","error"); return; }
+  if(!aels.runs.checked && !aels.artifacts.checked && !aels.caches.checked){
+    banner("Tick at least one of runs / artifacts / caches.","error"); return;
+  }
+  const ageMonths=Math.max(0,Number(els.age.value)||0);
+  const cutoff=new Date(Date.now()-ageMonths*MS_PER_MONTH);
+  const cutoffISO=cutoff.toISOString().slice(0,10);
+
+  ACT_BUSY=true; ACT_SCAN=[];
+  aels.loadBtn.disabled=true; aels.loadBtn.innerHTML='<span class="spin"></span> Scanning…';
+  aels.results.style.display="none"; aels.results.innerHTML="";
+  aels.actionbar.style.display="none"; aels.scopeNote.style.display="none";
+
+  let anyNoAccess=false;
+  for(const line of repoLines){
+    const m=line.match(/^([^/\s]+)\/([^/\s]+)$/);
+    if(!m){ log("Skipping malformed entry: "+line,"warn"); continue; }
+    const owner=m[1], repo=m[2];
+    log("Scanning Actions storage in "+owner+"/"+repo+" …");
+    const rec={owner, repo, items:[], truncated:false, noAccess:false};
+
+    if(aels.runs.checked){
+      // server-side date filter: only runs created before the cutoff
+      const r=await actPaged(`/repos/${owner}/${repo}/actions/runs?created=%3C${cutoffISO}`,"workflow_runs",ACT_PAGE_CAP);
+      if(r.items===null){
+        if(r.status===401){ banner("Token rejected (401).","error"); ACT_BUSY=false; return resetActBtn(); }
+        rec.noAccess=true; anyNoAccess=true;
+        log("✗ "+owner+"/"+repo+": runs list "+r.status+(r.status===403?" (no Actions permission?)":""),"err");
+      }else{
+        r.items.forEach(w=>rec.items.push({
+          kind:"run", id:w.id,
+          name:(w.name||w.path||"workflow")+" · run #"+w.run_number,
+          detail:(w.head_branch?("on "+w.head_branch+" · "):"")+(w.conclusion||w.status||""),
+          date:w.created_at?new Date(w.created_at):null, size:null, stale:true
+        }));
+        rec.truncated=rec.truncated||r.truncated;
+      }
+    }
+    if(aels.artifacts.checked && !rec.noAccess){
+      const r=await actPaged(`/repos/${owner}/${repo}/actions/artifacts`,"artifacts",ACT_PAGE_CAP);
+      if(r.items===null){ rec.noAccess=true; anyNoAccess=true; log("✗ "+owner+"/"+repo+": artifacts list "+r.status,"err"); }
+      else r.items.forEach(a=>{
+        const d=a.created_at?new Date(a.created_at):null;
+        const stale=(d && d<cutoff)||a.expired;
+        if(stale) rec.items.push({kind:"artifact", id:a.id, name:a.name,
+          detail:a.expired?"expired":"", date:d, size:a.size_in_bytes, stale:true});
+      });
+      if(r.items) rec.truncated=rec.truncated||r.truncated;
+    }
+    if(aels.caches.checked && !rec.noAccess){
+      const r=await actPaged(`/repos/${owner}/${repo}/actions/caches`,"actions_caches",ACT_PAGE_CAP);
+      if(r.items===null){ rec.noAccess=true; anyNoAccess=true; log("✗ "+owner+"/"+repo+": caches list "+r.status,"err"); }
+      else r.items.forEach(c=>{
+        const last=c.last_accessed_at?new Date(c.last_accessed_at):(c.created_at?new Date(c.created_at):null);
+        if(last && last<cutoff) rec.items.push({kind:"cache", id:c.id,
+          name:c.key, detail:c.ref||"", date:last, size:c.size_in_bytes, stale:true});
+      });
+      if(r.items) rec.truncated=rec.truncated||r.truncated;
+    }
+
+    rec.items.sort((a,b)=>(b.size||0)-(a.size||0));
+    ACT_SCAN.push(rec);
+    if(!rec.noAccess) log("✓ "+owner+"/"+repo+": "+rec.items.length+" stale item(s)"+(rec.truncated?" (list capped — rescan after deleting)":""),"ok");
+    if(rlState.restRemaining!==null && rlState.restRemaining<=3){
+      banner("REST rate limit nearly exhausted — stopping scan. Resets at "+resetTime(rlState.restReset)+".","error");
+      break;
+    }
+  }
+
+  if(anyNoAccess){
+    aels.scopeNote.textContent="Some repos returned 403/404 for Actions endpoints — the token likely lacks Actions: Read & write there. Those repos are shown as no-access; everything else works normally.";
+    aels.scopeNote.style.display="block";
+  }
+  renderActions(ageMonths);
+  ACT_BUSY=false; resetActBtn();
+}
+function resetActBtn(){ aels.loadBtn.disabled=false; aels.loadBtn.innerHTML="▸ Scan Actions storage"; }
+
+// ---------- render ----------
+function actKindTag(k){
+  if(k==="run") return '<span class="tag t-run">run</span>';
+  if(k==="artifact") return '<span class="tag t-artifact">artifact</span>';
+  return '<span class="tag t-cache">cache</span>';
+}
+function actId(o,r,it){ return cssId(o,r,"act:"+it.kind+":"+it.id); }
+
+function renderActions(ageMonths){
+  aels.results.innerHTML="";
+  let totalItems=0, totalBytes=0;
+  ACT_SCAN.forEach(r=>{
+    const block=document.createElement("div");
+    block.className="repo-block";
+    const bytes=r.items.reduce((s,i)=>s+(i.size||0),0);
+    totalItems+=r.items.length; totalBytes+=bytes;
+    block.innerHTML=`
+      <div class="repo-head">
+        <div class="repo-name"><span class="owner">${esc(r.owner)}/</span>${esc(r.repo)}</div>
+        <div class="repo-meta">
+          <span class="chip">${r.items.filter(i=>i.kind==="run").length} runs</span>
+          <span class="chip">${r.items.filter(i=>i.kind==="artifact").length} artifacts</span>
+          <span class="chip">${r.items.filter(i=>i.kind==="cache").length} caches</span>
+          <span class="chip stale">≈ ${fmtBytes(bytes)} reclaimable</span>
+          ${r.truncated?'<span class="chip">list capped</span>':""}
+        </div>
+      </div>
+      <div class="repo-toolbar">
+        <button data-aact="all" data-arepo="${esc(r.owner)}/${esc(r.repo)}">Select all</button>
+        <button data-aact="none" data-arepo="${esc(r.owner)}/${esc(r.repo)}">Clear</button>
+      </div>`;
+    if(r.noAccess){
+      const e=document.createElement("div"); e.className="empty-repo";
+      e.textContent="No access to Actions endpoints with this token.";
+      block.appendChild(e);
+    }else if(!r.items.length){
+      const e=document.createElement("div"); e.className="empty-repo";
+      e.textContent="Nothing older than "+ageMonths+" month(s) here. Clean already ✨";
+      block.appendChild(e);
+    }else{
+      const scroll=document.createElement("div"); scroll.className="tbl-scroll";
+      const tbl=document.createElement("table");
+      tbl.innerHTML=`<thead><tr><th style="width:34px"></th><th>Type</th><th>Item</th><th>Created / last used</th><th>Age</th><th>Size</th><th>Status</th></tr></thead>`;
+      const tb=document.createElement("tbody");
+      r.items.forEach(it=>{
+        const id=actId(r.owner,r.repo,it);
+        const tr=document.createElement("tr");
+        tr.innerHTML=`
+          <td><input type="checkbox" checked data-aid="${id}" data-aowner="${esc(r.owner)}" data-arepo2="${esc(r.repo)}" data-akind="${it.kind}" data-aitem="${it.id}" data-asize="${it.size||0}"></td>
+          <td>${actKindTag(it.kind)}</td>
+          <td class="bname">${esc(it.name)}${it.detail?' <span style="color:var(--txt-faint)">· '+esc(it.detail)+'</span>':""}</td>
+          <td class="b-date">${it.date?fmtDate(it.date):"—"}</td>
+          <td class="b-age old">${it.date?fmtAge(it.date):"—"}</td>
+          <td class="b-size">${fmtBytes(it.size)}</td>
+          <td class="b-status" data-status="${id}"></td>`;
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(tb); scroll.appendChild(tbl); block.appendChild(scroll);
+    }
+    aels.results.appendChild(block);
+  });
+  aels.results.style.display="block";
+  banner("Scan complete · "+totalItems+" stale item(s) · ≈ "+fmtBytes(totalBytes)+" reclaimable. Runs count toward retention, artifacts & caches toward storage.","info");
+  aels.results.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.addEventListener("change",updateActSelection));
+  aels.results.querySelectorAll('[data-aact]').forEach(btn=>btn.addEventListener("click",()=>{
+    aels.results.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+      if(cb.disabled) return;
+      if((cb.dataset.aowner+"/"+cb.dataset.arepo2)!==btn.dataset.arepo) return;
+      cb.checked=btn.dataset.aact==="all";
+    });
+    updateActSelection();
+  }));
+  updateActSelection();
+}
+
+// ---------- selection ----------
+function actSelected(){
+  const out=[];
+  aels.results.querySelectorAll('input[type=checkbox]:checked').forEach(cb=>{
+    if(cb.disabled) return;
+    out.push({owner:cb.dataset.aowner, repo:cb.dataset.arepo2, kind:cb.dataset.akind,
+      itemId:cb.dataset.aitem, size:Number(cb.dataset.asize)||0, id:cb.dataset.aid});
+  });
+  return out;
+}
+function updateActSelection(){
+  if(!aels.mode.classList.contains("active")){ aels.actionbar.style.display="none"; return; }
+  const sel=actSelected();
+  aels.selCount.textContent=sel.length;
+  aels.selSize.textContent=fmtBytes(sel.reduce((s,t)=>s+t.size,0));
+  aels.deleteBtn.disabled=(sel.length===0)||ACT_BUSY;
+  aels.actionbar.style.display=sel.length>0?"flex":"none";
+}
+
+// ---------- delete flow ----------
+function openActModal(){
+  const sel=actSelected();
+  if(!sel.length) return;
+  const bytes=sel.reduce((s,t)=>s+t.size,0);
+  aels.modalDesc.innerHTML="Permanently deletes <b style='color:var(--act)'>"+sel.length+"</b> item(s) (≈ "+fmtBytes(bytes)+"). Deleting a run also removes its logs and remaining artifacts. Code, branches and PRs are untouched.";
+  aels.modalList.innerHTML="";
+  const byRepo={};
+  sel.forEach(t=>{ (byRepo[t.owner+"/"+t.repo] ||= []).push(t); });
+  Object.entries(byRepo).forEach(([repo,items])=>{
+    const h=document.createElement("div"); h.className="mrepo";
+    h.textContent=repo+" · "+items.length; aels.modalList.appendChild(h);
+    items.slice(0,200).forEach(t=>{
+      const cb=aels.results.querySelector(`input[data-aid="${t.id}"]`);
+      const nameCell=cb?cb.closest("tr").querySelector(".bname").textContent:t.kind+" "+t.itemId;
+      const d=document.createElement("div"); d.className="mb";
+      d.textContent="["+t.kind+"] "+nameCell.slice(0,70);
+      aels.modalList.appendChild(d);
+    });
+    if(items.length>200){ const d=document.createElement("div"); d.className="mb"; d.textContent="… and "+(items.length-200)+" more"; aels.modalList.appendChild(d); }
+  });
+  aels.confirmType.value=""; aels.confirmBtn.disabled=true;
+  aels.modalBg.style.display="flex"; aels.confirmType.focus();
+}
+function closeActModal(){ aels.modalBg.style.display="none"; }
+
+async function runActDelete(){
+  const targets=actSelected();
+  if(!targets.length){ closeActModal(); return; }
+  ACT_BUSY=true; closeActModal();
+  aels.deleteBtn.disabled=true; aels.loadBtn.disabled=true;
+  banner("Deleting "+targets.length+" item(s)…","info");
+  let ok=0, fail=0, freed=0;
+  await runPool(targets, 3, async t=>{
+    const cell=document.querySelector(`[data-status="${t.id}"]`);
+    if(cell){ cell.className="b-status pending"; cell.innerHTML='<span class="spin"></span> deleting'; }
+    const path = t.kind==="run" ? `/repos/${t.owner}/${t.repo}/actions/runs/${t.itemId}`
+              : t.kind==="artifact" ? `/repos/${t.owner}/${t.repo}/actions/artifacts/${t.itemId}`
+              : `/repos/${t.owner}/${t.repo}/actions/caches/${t.itemId}`;
+    try{
+      const res=await ghREST(path,{method:"DELETE"});
+      if(res.status===204||res.status===404){
+        ok++; freed+=t.size;
+        actMark(t.id,"ok",res.status===204?"✓ deleted":"already gone");
+        const cb=aels.results.querySelector(`input[data-aid="${t.id}"]`);
+        if(cb){ cb.checked=false; cb.disabled=true; }
+      }else if(res.status===403){ fail++; actMark(t.id,"err","✗ forbidden (403)"); }
+      else if(res.status===409){ fail++; actMark(t.id,"err","✗ in progress (409)"); }
+      else{ fail++; actMark(t.id,"err","✗ error "+res.status); }
+    }catch(_){ fail++; actMark(t.id,"err","✗ network error"); }
+    if(rlState.restRemaining!==null && rlState.restRemaining<=1)
+      banner("Rate limit hit — remaining items not processed. Resets at "+resetTime(rlState.restReset)+".","error");
+  });
+  ACT_BUSY=false; aels.loadBtn.disabled=false;
+  banner("Done · "+ok+" deleted · ≈ "+fmtBytes(freed)+" freed"+(fail?(" · "+fail+" failed"):"")+".", fail?"error":"info");
+  updateActSelection();
+}
+function actMark(id,cls,txt){ const c=document.querySelector(`[data-status="${id}"]`); if(c){ c.className="b-status "+cls; c.textContent=txt; } }
+
+// ---------- CSV ----------
+function exportActCsv(){
+  if(!ACT_SCAN.length){ banner("Scan Actions storage first.","error"); return; }
+  const rows=[["repo","type","name","detail","date","age","size_bytes"]];
+  ACT_SCAN.forEach(r=>r.items.forEach(it=>rows.push([
+    r.owner+"/"+r.repo, it.kind, it.name, it.detail||"",
+    it.date?fmtDate(it.date):"", it.date?fmtAge(it.date):"", it.size==null?"":it.size
+  ])));
+  const csv=rows.map(r=>r.map(csvCell).join(",")).join("\n");
+  const blob=new Blob([csv],{type:"text/csv"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download="stale-actions-storage.csv";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+
+// ---------- wiring ----------
+aels.loadBtn.addEventListener("click",loadActions);
+aels.csvBtn.addEventListener("click",exportActCsv);
+aels.clearBtn.addEventListener("click",()=>{
+  ACT_SCAN=[]; aels.results.style.display="none"; aels.results.innerHTML="";
+  aels.actionbar.style.display="none"; aels.scopeNote.style.display="none"; clearBanner();
+});
+aels.deleteBtn.addEventListener("click",openActModal);
+aels.cancelBtn.addEventListener("click",closeActModal);
+aels.modalBg.addEventListener("click",e=>{ if(e.target===aels.modalBg) closeActModal(); });
+aels.confirmType.addEventListener("input",()=>{ aels.confirmBtn.disabled = aels.confirmType.value!=="CONFIRM"; });
+aels.confirmBtn.addEventListener("click",runActDelete);
+document.addEventListener("keydown",e=>{ if(e.key==="Escape" && aels.modalBg.style.display==="flex") closeActModal(); });
+
+/* ============================================================
+   ADDITIVE: COLLAPSIBLE PER-REPO SECTIONS (all three tabs)
+   One decorator + CSS class toggle. Never removes rows from the
+   DOM, so checked boxes in collapsed repos keep counting in
+   safeTargets/prSelected/actSelected. Hooked via MutationObserver;
+   renderResults / renderPRs / renderActions are untouched.
+   ============================================================ */
+const CLPS_STATE=new Map();   // "containerId|repoName" -> true(expanded)/false — in-memory only
+
+function clpsKey(container, block){
+  const nameEl=block.querySelector(".repo-name");
+  return container.id+"|"+(nameEl?nameEl.textContent.trim():"?");
+}
+function clpsSet(block, expanded){
+  block.classList.toggle("collapsed", !expanded);
+  const head=block.querySelector(".repo-head");
+  if(head) head.setAttribute("aria-expanded", expanded?"true":"false");
+}
+function clpsToggle(container, block){
+  const expanded=block.classList.contains("collapsed"); // will become this
+  clpsSet(block, expanded);
+  CLPS_STATE.set(clpsKey(container,block), expanded);
+}
+
+function clpsUpdateBadges(container){
+  container.querySelectorAll(".repo-block").forEach(block=>{
+    const badge=block.querySelector(".clps-badge");
+    if(!badge) return;
+    const sel=block.querySelectorAll('input[type=checkbox]:checked:not(:disabled)').length;
+    const ok=block.querySelectorAll(".b-status.ok").length;
+    const err=block.querySelectorAll(".b-status.err").length;
+    let html="";
+    if(sel) html+=sel+" selected";
+    if(ok) html+=(html?" · ":"")+'<span class="b-ok">'+ok+' ✓</span>';
+    if(err) html+=(html?" · ":"")+'<span class="b-err">'+err+' ✗</span>';
+    badge.innerHTML===html || (badge.innerHTML=html);
+    badge.classList.toggle("on", !!html);
+  });
+}
+
+function makeCollapsible(container){
+  const blocks=container.querySelectorAll(".repo-block");
+  if(!blocks.length) return;
+
+  // global expand/collapse bar (re-injected after each re-render)
+  if(!container.querySelector(".clps-bar")){
+    const bar=document.createElement("div");
+    bar.className="clps-bar";
+    bar.innerHTML='<button type="button" data-clpsall="1">⊞ Expand all</button><button type="button" data-clpsall="0">⊟ Collapse all</button>';
+    bar.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
+      const exp=b.dataset.clpsall==="1";
+      container.querySelectorAll(".repo-block").forEach(bl=>{
+        clpsSet(bl,exp); CLPS_STATE.set(clpsKey(container,bl),exp);
+      });
+    }));
+    container.insertBefore(bar, container.firstChild);
+  }
+
+  blocks.forEach(block=>{
+    if(block.dataset.clps) return;           // decorate once per rendered block
+    block.dataset.clps="1";
+    const head=block.querySelector(".repo-head");
+    if(!head) return;
+
+    // chevron in front of repo name
+    const nameEl=head.querySelector(".repo-name");
+    const chev=document.createElement("span");
+    chev.className="clps-chev"; chev.textContent="▸";
+    if(nameEl) nameEl.insertBefore(chev, nameEl.firstChild);
+
+    // live badge in the meta chip row
+    const meta=head.querySelector(".repo-meta")||head;
+    const badge=document.createElement("span");
+    badge.className="clps-badge";
+    meta.appendChild(badge);
+
+    head.setAttribute("role","button");
+    head.setAttribute("tabindex","0");
+    head.addEventListener("click",()=>clpsToggle(container,block));
+    head.addEventListener("keydown",e=>{
+      if(e.key==="Enter"||e.key===" "){ e.preventDefault(); clpsToggle(container,block); }
+    });
+
+    // initial state: remembered > single-repo auto-expand > collapsed
+    const key=clpsKey(container,block);
+    const remembered=CLPS_STATE.get(key);
+    const expanded = remembered!==undefined ? remembered : (blocks.length===1);
+    clpsSet(block, expanded);
+  });
+
+  clpsUpdateBadges(container);
+}
+
+// hook all three tabs; also auto-expand any collapsed repo that receives an ✗
+["results","prResults","actResults"].forEach(id=>{
+  const container=$(id);
+  if(!container) return;
+  container.addEventListener("change",e=>{
+    if(e.target && e.target.matches("input[type=checkbox]")) clpsUpdateBadges(container);
+  });
+  new MutationObserver(()=>{
+    makeCollapsible(container);
+    clpsUpdateBadges(container);
+    container.querySelectorAll(".repo-block.collapsed .b-status.err").forEach(cell=>{
+      const block=cell.closest(".repo-block");
+      if(block){ clpsSet(block,true); CLPS_STATE.set(clpsKey(container,block),true); }
+    });
+  }).observe(container,{childList:true,subtree:true});
+});
+
+/* ============================================================
+   ADDITIVE: PROTECTION AUDIT MODULE (read-only, 4th tab)
+   Reads PROTECTED_BRANCHES (never modifies it). No write calls,
+   no selections, no confirm modal. Emits .repo-block markup so
+   the collapsible decorator applies automatically. Tab
+   coordination via extra listeners only — no existing function
+   is edited.
+   ============================================================ */
+let AUD_SCAN=[];   // [{owner,repo,verdict,default:...,rows:[{branch,protected,isDefault,critical,finding,rules}],noAccess}]
+let AUD_BUSY=false;
+
+const auds={
+  mode:$("modeAudit"), controls:$("audControls"),
+  loadBtn:$("loadAudBtn"), csvBtn:$("audCsvBtn"), clearBtn:$("audClearBtn"),
+  scopeNote:$("audScopeNote"), results:$("audResults")
+};
+
+// ---------- tab coordination (additive only) ----------
+function audShow(on){
+  auds.mode.classList.toggle("active",on);
+  auds.controls.classList.toggle("show",on);
+  auds.results.style.display=(on && AUD_SCAN.length)?"block":"none";
+  if(on){
+    // hide the other three modules' UI without touching their functions
+    pels.modeBranches.classList.remove("active");
+    pels.modePR.classList.remove("active");
+    aels.mode.classList.remove("active");
+    els.loadBtn.style.display="none";
+    const so=els.showOthers.closest("label"); if(so) so.style.display="none";
+    els.clearBtn.style.display="none";
+    els.results.style.display="none";
+    $("actionbar").style.display="none";
+    pels.prControls.classList.remove("show");
+    pels.prResults.style.display="none";
+    pels.prActionbar.style.display="none";
+    aels.controls.classList.remove("show");
+    aels.results.style.display="none";
+    aels.actionbar.style.display="none";
+  }
+}
+auds.mode.addEventListener("click",()=>audShow(true));
+pels.modeBranches.addEventListener("click",()=>audShow(false));
+pels.modePR.addEventListener("click",()=>audShow(false));
+aels.mode.addEventListener("click",()=>audShow(false));
+
+// ---------- scan ----------
+async function audListBranches(owner,repo){
+  const out=[]; let page=1;
+  while(page<=10){
+    const res=await ghREST(`/repos/${owner}/${repo}/branches?per_page=100&page=${page}`);
+    if(!res.ok) return {items:null,status:res.status};
+    const arr=await res.json();
+    arr.forEach(b=>out.push({name:b.name, protected:!!b.protected}));
+    if(arr.length<100) break;
+    page++;
+  }
+  return {items:out,status:null};
+}
+
+function summarizeRules(rules){
+  // rules = array from GET /repos/{o}/{r}/rules/branches/{branch} (rulesets only)
+  const has=t=>rules.some(r=>r.type===t);
+  const parts=[];
+  parts.push(has("deletion")?'<span class="r-on">no-delete ✓</span>':'<span class="r-off">deletable ✗</span>');
+  parts.push(has("non_fast_forward")?'<span class="r-on">no-force-push ✓</span>':'<span class="r-off">force-push ✗</span>');
+  if(has("pull_request")) parts.push('<span class="r-on">PR required ✓</span>');
+  if(has("required_status_checks")) parts.push('<span class="r-on">checks ✓</span>');
+  return parts.join(" · ");
+}
+
+async function runAudit(){
+  if(AUD_BUSY||DELETING||PR_DELETING||ACT_BUSY) return;
+  clearBanner(); els.log.innerHTML=""; els.log.style.display="none";
+  PAT=els.pat.value.trim();
+  if(!PAT){ banner("Enter a Personal Access Token first.","error"); return; }
+  const repoLines=els.repos.value.split("\n").map(s=>s.trim()).filter(Boolean);
+  if(!repoLines.length){ banner("Add at least one owner/repo line.","error"); return; }
+
+  AUD_BUSY=true; AUD_SCAN=[];
+  auds.loadBtn.disabled=true; auds.loadBtn.innerHTML='<span class="spin"></span> Auditing…';
+  auds.results.style.display="none"; auds.results.innerHTML="";
+  auds.scopeNote.style.display="none";
+
+  let anyDetailDenied=false;
+  const denySet=PROTECTED; // read-only reuse of the existing lowercase Set
+
+  for(const line of repoLines){
+    const m=line.match(/^([^/\s]+)\/([^/\s]+)$/);
+    if(!m){ log("Skipping malformed entry: "+line,"warn"); continue; }
+    const owner=m[1], repo=m[2];
+    log("Auditing "+owner+"/"+repo+" …");
+
+    const meta=await ghREST(`/repos/${owner}/${repo}`);
+    if(meta.status===401){ banner("Token rejected (401).","error"); AUD_BUSY=false; return resetAudBtn(); }
+    if(!meta.ok){
+      AUD_SCAN.push({owner,repo,verdict:"noaccess",default:null,rows:[],noAccess:true});
+      log("✗ "+owner+"/"+repo+": "+meta.status+" — no access.","err");
+      continue;
+    }
+    const def=(await meta.json()).default_branch;
+
+    const lb=await audListBranches(owner,repo);
+    if(lb.items===null){
+      AUD_SCAN.push({owner,repo,verdict:"noaccess",default:def,rows:[],noAccess:true});
+      log("✗ "+owner+"/"+repo+": branches list "+lb.status+".","err");
+      continue;
+    }
+    const byName=new Map(lb.items.map(b=>[b.name.toLowerCase(),b]));
+
+    // critical set = default + every denylist name that EXISTS here
+    const criticalNames=new Set([def.toLowerCase()]);
+    denySet.forEach(n=>{ if(byName.has(n)) criticalNames.add(n); });
+
+    const rows=[];
+    criticalNames.forEach(low=>{
+      const b=byName.get(low);
+      if(!b) return; // default should always exist; guard anyway
+      const isDefault=low===def.toLowerCase();
+      rows.push({
+        branch:b.name, protected:b.protected, isDefault, critical:true,
+        finding:b.protected?"ok":"drift", rules:null
+      });
+    });
+    // INFO: protected in GitHub but outside denylist and not default
+    lb.items.forEach(b=>{
+      const low=b.name.toLowerCase();
+      if(b.protected && !criticalNames.has(low)){
+        rows.push({branch:b.name, protected:true, isDefault:false, critical:false,
+          finding:"info", rules:null,
+          note:low==="main"?"'main' is protected in GitHub but NOT in this tool's denylist":""});
+      }
+    });
+
+    // best-effort effective-rules detail for critical branches
+    await runPool(rows.filter(r=>r.critical),4,async r=>{
+      try{
+        const res=await ghREST(`/repos/${owner}/${repo}/rules/branches/${encodeURIComponent(r.branch)}`);
+        if(res.ok){
+          const rules=await res.json();
+          if(Array.isArray(rules)&&rules.length) r.rules=summarizeRules(rules);
+          else if(r.protected) r.rules='<span style="color:var(--txt-faint)">classic protection — details need admin</span>';
+        }else{ anyDetailDenied=true; }
+      }catch(_){ anyDetailDenied=true; }
+    });
+
+    const drifted=rows.filter(r=>r.finding==="drift");
+    const infos=rows.filter(r=>r.finding==="info");
+    const verdict=drifted.length?"drift":(infos.length?"info":"ok");
+    AUD_SCAN.push({owner,repo,verdict,default:def,rows,drifted:drifted.map(r=>r.branch)});
+    log((verdict==="drift"?"✗ ":"✓ ")+owner+"/"+repo+": "+verdict.toUpperCase()+
+        (drifted.length?" — unprotected: "+drifted.map(r=>r.branch).join(", "):""),
+        verdict==="drift"?"err":"ok");
+
+    if(rlState.restRemaining!==null && rlState.restRemaining<=3){
+      banner("REST rate limit nearly exhausted — stopping audit. Resets at "+resetTime(rlState.restReset)+".","error");
+      break;
+    }
+  }
+
+  if(anyDetailDenied){
+    auds.scopeNote.textContent="Some rule details returned 403/404 — effective-rules summaries need at least ruleset read (classic branch-protection details need admin). The protected yes/no audit above is still accurate.";
+    auds.scopeNote.style.display="block";
+  }
+  renderAudit();
+  AUD_BUSY=false; resetAudBtn();
+}
+function resetAudBtn(){ auds.loadBtn.disabled=false; auds.loadBtn.innerHTML="▸ Run protection audit"; }
+
+// ---------- render ----------
+function audVerdictChip(v,drifted){
+  if(v==="ok") return '<span class="chip v-ok">✓ OK</span>';
+  if(v==="drift") return '<span class="chip v-drift">✗ DRIFT'+(drifted&&drifted.length?": "+esc(drifted.join(", ")):"")+'</span>';
+  if(v==="info") return '<span class="chip v-info">ℹ INFO</span>';
+  return '<span class="chip v-noacc">no access</span>';
+}
+function audFindingTag(r){
+  if(r.finding==="ok") return '<span class="tag f-ok">protected ✓</span>';
+  if(r.finding==="drift") return '<span class="tag f-drift">UNPROTECTED — server-side drift</span>';
+  return '<span class="tag f-info">protected, outside denylist</span>';
+}
+
+function renderAudit(){
+  auds.results.innerHTML="";
+  let nOk=0,nDrift=0,nInfo=0,nNo=0;
+  AUD_SCAN.forEach(r=>{
+    if(r.verdict==="ok")nOk++; else if(r.verdict==="drift")nDrift++;
+    else if(r.verdict==="info")nInfo++; else nNo++;
+    const block=document.createElement("div");
+    block.className="repo-block";
+    block.innerHTML=`
+      <div class="repo-head">
+        <div class="repo-name"><span class="owner">${esc(r.owner)}/</span>${esc(r.repo)}</div>
+        <div class="repo-meta">
+          ${r.default?'<span class="chip def">default: '+esc(r.default)+'</span>':""}
+          ${audVerdictChip(r.verdict,r.drifted)}
+        </div>
+      </div>`;
+    if(r.noAccess){
+      const e=document.createElement("div"); e.className="empty-repo";
+      e.textContent="Repo metadata or branch list not readable with this token.";
+      block.appendChild(e);
+    }else if(!r.rows.length){
+      const e=document.createElement("div"); e.className="empty-repo";
+      e.textContent="No critical or protected branches found.";
+      block.appendChild(e);
+    }else{
+      const scroll=document.createElement("div"); scroll.className="tbl-scroll";
+      const tbl=document.createElement("table");
+      tbl.innerHTML=`<thead><tr><th>Branch</th><th>Protected</th><th>Default?</th><th>Effective rules</th><th>Finding</th></tr></thead>`;
+      const tb=document.createElement("tbody");
+      r.rows.sort((a,b)=>(a.finding==="drift"?0:1)-(b.finding==="drift"?0:1));
+      r.rows.forEach(row=>{
+        const tr=document.createElement("tr");
+        tr.innerHTML=`
+          <td class="bname">${esc(row.branch)}</td>
+          <td>${row.protected?'<span class="tag f-ok">yes</span>':'<span class="tag f-drift">no</span>'}</td>
+          <td class="b-date">${row.isDefault?"● default":""}</td>
+          <td class="aud-rules">${row.rules||'<span style="color:var(--txt-faint)">—</span>'}</td>
+          <td>${audFindingTag(row)}${row.note?' <span style="color:var(--cyan);font-size:11px">'+esc(row.note)+'</span>':""}</td>`;
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(tb); scroll.appendChild(tbl); block.appendChild(scroll);
+    }
+    auds.results.appendChild(block);
+  });
+  auds.results.style.display="block";
+  banner("Audit complete · "+nOk+" OK · "+nDrift+" drift · "+nInfo+" info · "+nNo+" no-access. DRIFT = a critical branch exists but has no server-side protection.", nDrift?"error":"info");
+}
+
+// ---------- CSV ----------
+function exportAudCsv(){
+  if(!AUD_SCAN.length){ banner("Run the audit first.","error"); return; }
+  const rows=[["repo","branch","is_default","protected","finding","rules"]];
+  AUD_SCAN.forEach(r=>{
+    if(r.noAccess){ rows.push([r.owner+"/"+r.repo,"","","","no_access",""]); return; }
+    r.rows.forEach(x=>rows.push([
+      r.owner+"/"+r.repo, x.branch, x.isDefault?"yes":"", x.protected?"yes":"no",
+      x.finding, (x.rules||"").replace(/<[^>]+>/g,"")
+    ]));
+  });
+  const csv=rows.map(r=>r.map(csvCell).join(",")).join("\n");
+  const blob=new Blob([csv],{type:"text/csv"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download="branch-protection-audit.csv";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+
+// ---------- wiring ----------
+auds.loadBtn.addEventListener("click",runAudit);
+auds.csvBtn.addEventListener("click",exportAudCsv);
+auds.clearBtn.addEventListener("click",()=>{
+  AUD_SCAN=[]; auds.results.style.display="none"; auds.results.innerHTML="";
+  auds.scopeNote.style.display="none"; clearBanner();
+});
+
+// collapsible decoration for the audit container (additive registration,
+// mirrors the existing observers on results/prResults/actResults)
+new MutationObserver(()=>{ makeCollapsible(auds.results); }).observe(auds.results,{childList:true,subtree:true});
+
+/* ============================================================
+   ADDITIVE: ORG REPO DISCOVERY
+   Fetches an org's repo inventory (GraphQL first, REST fallback)
+   and fills the EXISTING repo textarea, which remains the single
+   source of truth for every module. No frozen function is
+   touched; new disc* ids/state only.
+   ============================================================ */
+let DISC=[];          // [{full, archived, fork, pushedAt(Date|null), lang, topics[], canPush}]
+let DISC_BUSY=false;
+const DISC_PAGE_CAP=10;   // 10 × 100 = up to 1000 repos per discovery
+
+const dels={
+  org:$("discOrg"), btn:$("discBtn"), filters:$("discFilters"),
+  noArchived:$("discNoArchived"), noForks:$("discNoForks"), pushOnly:$("discPushOnly"),
+  topic:$("discTopic"), lang:$("discLang"), pushed:$("discPushed"),
+  count:$("discCount"), fillBtn:$("discFillBtn"), note:$("discNote")
+};
+
+const GQL_ORG_REPOS=`
+query($org:String!,$cursor:String){
+  rateLimit{ remaining resetAt }
+  organization(login:$org){
+    repositories(first:100, after:$cursor, orderBy:{field:PUSHED_AT, direction:DESC}){
+      pageInfo{ hasNextPage endCursor }
+      nodes{
+        nameWithOwner isArchived isFork pushedAt viewerPermission
+        primaryLanguage{ name }
+        repositoryTopics(first:20){ nodes{ topic{ name } } }
+      }
+    }
+  }
+}`;
+
+async function discFetchGraphQL(org){
+  let cursor=null; const out=[]; let pages=0, truncated=false;
+  do{
+    const data=await ghGraphQL(GQL_ORG_REPOS,{org,cursor});
+    const o=data.data && data.data.organization;
+    if(!o) throw {code:"noorg"};
+    const r=o.repositories;
+    r.nodes.forEach(n=>out.push({
+      full:n.nameWithOwner, archived:n.isArchived, fork:n.isFork,
+      pushedAt:n.pushedAt?new Date(n.pushedAt):null,
+      lang:n.primaryLanguage?n.primaryLanguage.name:"",
+      topics:n.repositoryTopics.nodes.map(t=>t.topic.name.toLowerCase()),
+      canPush:WRITABLE.has(n.viewerPermission)
+    }));
+    pages++;
+    cursor=r.pageInfo.hasNextPage?r.pageInfo.endCursor:null;
+    if(cursor && pages>=DISC_PAGE_CAP){ truncated=true; cursor=null; }
+  }while(cursor);
+  return {repos:out, truncated};
+}
+
+async function discFetchREST(org){
+  const out=[]; let page=1, truncated=false;
+  while(page<=DISC_PAGE_CAP){
+    const res=await ghREST(`/orgs/${encodeURIComponent(org)}/repos?type=all&sort=pushed&per_page=100&page=${page}`);
+    if(res.status===404) throw {code:"noorg"};
+    if(!res.ok) throw {code:res.status};
+    const arr=await res.json();
+    arr.forEach(r=>out.push({
+      full:r.full_name, archived:!!r.archived, fork:!!r.fork,
+      pushedAt:r.pushed_at?new Date(r.pushed_at):null,
+      lang:r.language||"",
+      topics:(r.topics||[]).map(t=>t.toLowerCase()),
+      canPush:!!(r.permissions && r.permissions.push)
+    }));
+    if(arr.length<100) break;
+    if(page===DISC_PAGE_CAP){ truncated=true; }
+    page++;
+  }
+  return {repos:out, truncated};
+}
+
+function discFiltered(){
+  const topic=dels.topic.value.trim().toLowerCase();
+  const lang=dels.lang.value.trim().toLowerCase();
+  const months=Number(dels.pushed.value);
+  const cutoff=(dels.pushed.value!=="" && !isNaN(months) && months>0)
+    ? Date.now()-months*MS_PER_MONTH : null;
+  return DISC.filter(r=>{
+    if(dels.noArchived.checked && r.archived) return false;
+    if(dels.noForks.checked && r.fork) return false;
+    if(dels.pushOnly.checked && !r.canPush) return false;
+    if(topic && !r.topics.some(t=>t.includes(topic))) return false;
+    if(lang && r.lang.toLowerCase()!==lang) return false;
+    if(cutoff!==null && (!r.pushedAt || r.pushedAt.getTime()<cutoff)) return false;
+    return true;
+  });
+}
+
+function discUpdateCount(){
+  if(!DISC.length){ dels.count.textContent="0 match"; dels.fillBtn.disabled=true; return; }
+  const n=discFiltered().length;
+  dels.count.textContent=n+" of "+DISC.length+" match";
+  dels.fillBtn.disabled=n===0;
+}
+
+async function discRun(){
+  if(DISC_BUSY) return;
+  clearBanner(); dels.note.style.display="none";
+  PAT=els.pat.value.trim();
+  if(!PAT){ banner("Enter a Personal Access Token first.","error"); return; }
+  const org=dels.org.value.trim().replace(/^@/,"");
+  if(!org){ banner("Enter an organization name to discover.","error"); return; }
+
+  DISC_BUSY=true; DISC=[];
+  dels.btn.disabled=true; dels.btn.innerHTML='<span class="spin"></span> Discovering…';
+  dels.filters.style.display="none";
+
+  let result=null;
+  try{ result=await discFetchGraphQL(org); }
+  catch(e){
+    if(e.code===401){ failAuth(e); DISC_BUSY=false; return discResetBtn(); }
+    if(e.code==="gql"){ log("GraphQL unavailable — using REST for discovery.","warn"); }
+    else if(e.code==="noorg"){ /* fall through to REST — could be a user or plan quirk */ }
+  }
+  if(!result){
+    try{ result=await discFetchREST(org); }
+    catch(e){
+      if(e.code===401) failAuth(e);
+      else if(e.code==="noorg") banner("Organization “"+org+"” not found or not visible to this token.","error");
+      else banner("Discovery failed ("+(e.code||"?")+").","error");
+      DISC_BUSY=false; return discResetBtn();
+    }
+  }
+
+  DISC=result.repos;
+  log("Discovered "+DISC.length+" repos in "+org+(result.truncated?" (capped at "+DISC_PAGE_CAP*100+" — largest orgs need topic/language filters)":""),"ok");
+  if(result.truncated){
+    dels.note.textContent="Listing capped at "+(DISC_PAGE_CAP*100)+" repos (most recently pushed first). Use filters to narrow, or run discovery per team topic.";
+    dels.note.style.display="block";
+  }
+  dels.filters.style.display="flex";
+  discUpdateCount();
+  banner("Discovery complete · "+DISC.length+" repos fetched from "+org+". Adjust filters, then “Fill repo list”.","info");
+  DISC_BUSY=false; discResetBtn();
+}
+function discResetBtn(){ dels.btn.disabled=false; dels.btn.innerHTML="⌕ Discover repos"; }
+
+function discFill(){
+  const list=discFiltered().map(r=>r.full);
+  if(!list.length) return;
+  els.repos.value=list.join("\n");
+  banner(list.length+" repo(s) written to the repo list — every tab now scans this set. Review before loading.","info");
+  log("Repo list filled with "+list.length+" repos from discovery (previous content replaced).","ok");
+}
+
+// live count on filter changes
+[dels.noArchived,dels.noForks,dels.pushOnly].forEach(cb=>cb.addEventListener("change",discUpdateCount));
+[dels.topic,dels.lang,dels.pushed].forEach(inp=>inp.addEventListener("input",discUpdateCount));
+dels.btn.addEventListener("click",discRun);
+dels.fillBtn.addEventListener("click",discFill);
+dels.org.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); discRun(); } });
+</script>
+</body>
+</html>

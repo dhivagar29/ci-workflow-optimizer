@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src https://api.github.com https://api.snyk.io; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Snyk Vulnerability Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#091022; --panel:#0f1d3d; --panel-2:#17284c;
+  --line:#293c64; --line-soft:#1c2c4d;
+  --txt:#dde6f5; --txt-dim:#93a2c2; --txt-faint:#5f6f90;
+  --red:#fe3842; --red-soft:#3a1117;
+  --crit:#ff5c66; --crit-soft:#3d0f16;
+  --high:#f0883e; --high-soft:#38200c;
+  --green:#3fb950; --green-soft:#0e2c1c;
+  --cyan:#5b9dff; --cyan-soft:#13294f;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--sans);
+  background:
+    radial-gradient(1200px 600px at 80% -10%, #16284f 0%, transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, #2a0e15 0%, transparent 55%),
+    var(--bg);
+  background-attachment:fixed;
+  color:var(--txt); line-height:1.5; min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1180px;margin:0 auto;padding:32px 22px 140px}
+header{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:26px}
+h1{font-family:var(--mono);font-weight:700;font-size:clamp(24px,4vw,36px);margin:0;line-height:1.05}
+.tagline{color:var(--txt-dim);font-size:13.5px;max-width:52ch;margin-top:6px}
+.ratebox{font-family:var(--mono);font-size:11.5px;color:var(--txt-dim);border:1px solid var(--line);border-radius:10px;padding:11px 14px;background:rgba(15,29,61,.6);min-width:200px}
+.ratebox .rl-row{display:flex;justify-content:space-between;gap:14px;padding:2px 0}
+.ratebox b{color:var(--txt);font-weight:600}
+#whoami{color:var(--green)}
+
+.panel{background:linear-gradient(180deg,var(--panel) 0%,#11161d 100%);border:1px solid var(--line);border-radius:14px;padding:22px;margin-bottom:20px;box-shadow:0 18px 40px -28px rgba(0,0,0,.9)}
+.panel-title{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--txt-dim);font-weight:600;margin:0 0 16px;display:flex;align-items:center;gap:10px}
+.panel-title .num{width:22px;height:22px;display:grid;place-items:center;border:1px solid var(--line);border-radius:6px;color:var(--red);font-size:11px;background:var(--red-soft)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+label.field{display:block}
+.lbl{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-dim);margin-bottom:7px;display:flex;align-items:center;gap:8px}
+input[type=password],input[type=text]{width:100%;background:#0b0f15;border:1px solid var(--line);color:var(--txt);font-family:var(--mono);font-size:13.5px;padding:11px 13px;border-radius:9px;outline:none;transition:border-color .15s,box-shadow .15s}
+input:focus{border-color:var(--red);box-shadow:0 0 0 3px var(--red-soft)}
+.hint{font-size:11.5px;color:var(--txt-faint);margin-top:7px;font-family:var(--mono)}
+.hint code{color:var(--red);background:var(--red-soft);padding:1px 5px;border-radius:4px}
+
+.dock{margin:22px -22px -22px;padding:14px 22px 18px;background:#0b1226;border-top:1px solid var(--line);border-radius:0 0 14px 14px}
+.row-end{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap}
+button{font-family:var(--mono);font-weight:600;font-size:13px;letter-spacing:.04em;border:1px solid var(--line);border-radius:9px;cursor:pointer;padding:12px 20px;color:var(--txt);background:var(--panel-2);transition:transform .08s,background .15s,border-color .15s,opacity .15s}
+button:hover:not(:disabled){border-color:var(--red);background:#222c38}
+button:active:not(:disabled){transform:translateY(1px)}
+button:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:var(--red);color:#fff;border-color:var(--red)}
+.btn-primary:hover:not(:disabled){background:#ff525b;border-color:#ff525b}
+.btn-ghost{background:transparent}
+.note{font-family:var(--mono);font-size:11.5px;color:var(--txt-faint);line-height:1.8;margin-top:10px}
+.note b{color:var(--txt-dim)}
+
+.banner{font-family:var(--mono);font-size:12px;border-radius:9px;padding:11px 14px;margin-top:14px;display:none}
+.banner.show{display:block}
+.banner.error{color:var(--red);background:var(--red-soft);border:1px solid #5a2420}
+.banner.info{color:var(--cyan);background:var(--cyan-soft);border:1px solid #234a78}
+#log{font-family:var(--mono);font-size:12px;color:var(--txt-dim);background:#080b10;border:1px solid var(--line-soft);border-radius:9px;padding:12px 14px;max-height:150px;overflow:auto;margin-top:12px;display:none}
+#log .l{padding:1px 0;white-space:pre-wrap}
+#log .l.err{color:var(--red)} #log .l.ok{color:var(--green)} #log .l.warn{color:var(--high)}
+
+.summary{border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:20px;background:linear-gradient(180deg,var(--panel) 0%,#11182b 100%);display:flex;gap:26px;flex-wrap:wrap;align-items:center;display:none}
+.summary.show{display:flex}
+.sum-big{font-family:var(--mono);font-weight:700;font-size:40px;line-height:1;color:var(--crit)}
+.sum-big small{display:block;font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--txt-dim);margin-top:6px}
+.sum-meta{font-family:var(--mono);font-size:11.5px;color:var(--txt-faint);line-height:1.9;margin-left:auto}
+
+.chip{font-family:var(--mono);font-size:11px;padding:4px 9px;border-radius:20px;border:1px solid var(--line);color:var(--txt-dim)}
+.chip.critical{color:var(--crit);border-color:#7a2730;background:var(--crit-soft)}
+.chip.high{color:var(--high);border-color:#6b4218;background:var(--high-soft)}
+.chip.clean{color:var(--green);border-color:#1e5a32;background:var(--green-soft)}
+.chip.def{color:var(--cyan);border-color:#234a78;background:var(--cyan-soft)}
+
+#results{display:none}
+.repo-block{margin-bottom:20px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)}
+.repo-head{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px 18px;background:var(--panel-2);border-bottom:1px solid var(--line);cursor:pointer;user-select:none}
+.repo-head:hover{background:#1c2f57}
+.repo-head:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+.repo-name{font-family:var(--mono);font-weight:600;font-size:15px}
+.repo-name .owner{color:var(--txt-dim)}
+.chev{font-family:var(--mono);color:var(--txt-dim);font-size:12px;display:inline-block;width:16px;transition:transform .15s;transform:rotate(0deg);margin-right:2px}
+.repo-block.open .chev{transform:rotate(90deg)}
+.repo-meta{display:flex;gap:8px;flex-wrap:wrap}
+.repo-body{display:none}
+.repo-block.open .repo-body{display:block}
+.tbl-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);text-align:left;font-weight:600;padding:11px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:11px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.mono{font-family:var(--mono)}
+.pkg{font-family:var(--mono);color:var(--txt)}
+.ver{font-family:var(--mono);font-size:12px;color:var(--txt-dim);white-space:nowrap}
+.ver .to{color:var(--green)}
+.sev{font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:5px;white-space:nowrap;font-weight:700}
+.sev.critical{color:#fff;background:var(--crit)}
+.sev.high{color:#1a0d02;background:var(--high)}
+.mat{font-family:var(--mono);font-size:11px;color:var(--txt-faint)}
+.b-status{font-family:var(--mono);font-size:11.5px;white-space:nowrap}
+.b-status.ok{color:var(--green)} .b-status.err{color:var(--red)} .b-status.pending{color:var(--high)}
+.b-status a{color:var(--green)}
+input[type=checkbox]{width:17px;height:17px;accent-color:var(--red);cursor:pointer}
+input[type=checkbox]:disabled{cursor:not-allowed;opacity:.35}
+.empty-repo{padding:18px;color:var(--txt-faint);font-family:var(--mono);font-size:12.5px}
+
+#actionbar{position:fixed;left:0;right:0;bottom:0;z-index:40;display:none;padding:14px 22px;background:repeating-linear-gradient(45deg,#2a0e15 0 18px,#0c1429 18px 36px);border-top:2px solid var(--red);box-shadow:0 -16px 40px -20px rgba(0,0,0,.95)}
+#actionbar .inner{max-width:1180px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.selsummary{font-family:var(--mono);font-size:13px}
+.selsummary b{color:var(--red);font-size:16px}
+.selsummary .sub{display:block;color:var(--txt-faint);font-size:11px;margin-top:2px}
+
+.modal-bg{position:fixed;inset:0;z-index:60;display:none;background:rgba(4,6,9,.82);backdrop-filter:blur(3px);align-items:center;justify-content:center;padding:22px}
+.modal{background:var(--panel);border:1px solid var(--red);border-radius:16px;max-width:600px;width:100%;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 30px 80px -20px rgba(0,0,0,.9);overflow:hidden}
+.modal-head{padding:20px 22px 16px;border-bottom:1px solid var(--line)}
+.modal-head .mtitle{font-family:var(--mono);font-weight:700;font-size:18px;color:var(--red);display:flex;align-items:center;gap:10px}
+.modal-head p{margin:10px 0 0;color:var(--txt-dim);font-size:13px}
+.modal-list{overflow:auto;padding:8px 22px;flex:1;font-family:var(--mono);font-size:12.5px}
+.modal-list .mrepo{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-faint);margin:12px 0 6px}
+.modal-list .mb{padding:3px 0 3px 14px;border-left:2px solid var(--red-soft)}
+.modal-foot{padding:18px 22px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:14px}
+.modal-actions{display:flex;gap:12px;justify-content:flex-end}
+.confirm-type code{color:var(--red)}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--red);border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.foot-note{font-family:var(--mono);font-size:11px;color:var(--txt-faint);text-align:center;margin-top:30px;line-height:1.8}
+.foot-note .dot{color:var(--red)}
+.clps-bar{display:flex;gap:8px;justify-content:flex-end;margin:0 0 12px}
+.clps-bar button{padding:7px 13px;font-size:11.5px;background:transparent}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Snyk Vulnerability Dashboard</h1>
+      <div class="tagline">High &amp; critical vulnerabilities across your GitHub team's repos, straight from Snyk — with gated fix-PR creation against each repo's default branch. Tokens live in memory only.</div>
+    </div>
+    <div class="ratebox">
+      <div class="rl-row"><span>GitHub user</span><b id="whoami">&mdash;</b></div>
+      <div class="rl-row"><span>GitHub quota</span><b id="rl-gh">&mdash;</b></div>
+      <div class="rl-row"><span>Snyk org</span><b id="rl-snyk">&mdash;</b></div>
+    </div>
+  </header>
+
+  <div class="panel">
+    <div class="panel-title"><span class="num">1</span> Connect</div>
+    <div class="grid">
+      <label class="field">
+        <span class="lbl">GitHub Personal Access Token</span>
+        <input type="password" id="pat" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false">
+        <div class="hint">Needs <code>read:org</code> (team repo list) + <code>Contents: RW</code> and <code>Pull requests: RW</code> for the fallback fix-PR path. In memory only.</div>
+      </label>
+      <label class="field">
+        <span class="lbl">Snyk API Token</span>
+        <input type="password" id="snykToken" placeholder="Snyk account / service-account token" autocomplete="off" spellcheck="false">
+        <div class="hint">From Snyk → Account settings → API token (a service-account token is preferred). Org-read for issues; only sent to <code>api.snyk.io</code>. In memory only.</div>
+      </label>
+    </div>
+    <div class="dock">
+      <div class="row-end">
+        <button class="btn-primary" id="loadBtn">▸ Load vulnerabilities</button>
+        <button class="btn-ghost" id="csvBtn">⤓ Export CSV</button>
+        <button class="btn-ghost" id="resetBtn">Reset</button>
+      </div>
+      <div class="note">Scope: GitHub team <b id="teamLbl"></b> in org <b id="orgLbl"></b> · Snyk org ID <b id="snykOrgLbl"></b> — all three are <b>EDIT-ME constants</b> at the top of this file's script. Severities shown: <b>critical</b> and <b>high</b>, open issues only.</div>
+      <div class="banner" id="topBanner"></div>
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <div class="summary" id="summary">
+    <div class="sum-big" id="sumTotal">0<small>open high/critical</small></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <span class="chip critical" id="sumCrit">critical × 0</span>
+      <span class="chip high" id="sumHigh">high × 0</span>
+      <span class="chip clean" id="sumClean">clean repos × 0</span>
+    </div>
+    <div class="sum-meta" id="sumMeta"></div>
+  </div>
+
+  <div id="results"></div>
+
+  <div class="foot-note">
+    <span class="dot">●</span> Runs entirely client-side · talks only to api.github.com and api.snyk.io
+    <br>Fix PRs are never auto-merged — every change lands as a reviewable pull request against the default branch
+  </div>
+</div>
+
+<div id="actionbar">
+  <div class="inner">
+    <div class="selsummary">
+      <b id="selCount">0</b> vulnerability(ies) selected for fix PRs
+      <span class="sub">One PR per repo, targeting its default branch. Snyk Fix PR attempted first; manifest-bump fallback is labeled.</span>
+    </div>
+    <button class="btn-primary" id="fixBtn" disabled>⇪ Create fix PRs…</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="mtitle">⇪ Confirm fix-PR creation</div>
+      <p><b id="mCount" style="color:var(--red)">0</b> vulnerability fix(es), grouped into <b id="mRepos" style="color:var(--red)">0</b> pull request(s). PRs target each repo's <b>default branch</b> and are never merged automatically. Fallback commits are manifest bumps only — lockfiles may need regeneration in CI.</p>
+    </div>
+    <div class="modal-list" id="modalList"></div>
+    <div class="modal-foot">
+      <label class="field confirm-type">
+        <span class="lbl">Type <code>CONFIRM</code> to arm the button</span>
+        <input type="text" id="confirmType" placeholder="CONFIRM" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="cancelBtn">Cancel</button>
+        <button class="btn-primary" id="confirmBtn" disabled>Create pull requests</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   EDIT-ME CONSTANTS
+   ============================================================ */
+const ORG_NAME    = "nationwide-building-society";  // GitHub organization
+const TEAM_SLUG   = "devsecops";                    // GitHub team slug whose repos are shown
+const SNYK_ORG_ID = "00000000-0000-0000-0000-000000000000"; // Snyk org ID (Snyk → Settings)
+
+const GH_API   = "https://api.github.com";
+const SNYK_API = "https://api.snyk.io";
+const SEVERITIES = ["critical","high"];
+
+// ---- in-memory state (never persisted) ----
+let PAT="", SNYK="";
+let ME={login:null};
+let REPOS=[];      // [{full, name, defaultBranch}]
+let VULNS=[];      // [{repo, projectId, projectName, manifest, id, title, severity, cve, pkg, from, fixedIn, maturity, fixable}]
+let BUSY=false;
+
+const $=id=>document.getElementById(id);
+const els={
+  pat:$("pat"), snyk:$("snykToken"), loadBtn:$("loadBtn"), csvBtn:$("csvBtn"), resetBtn:$("resetBtn"),
+  banner:$("topBanner"), log:$("log"), results:$("results"), summary:$("summary"),
+  sumTotal:$("sumTotal"), sumCrit:$("sumCrit"), sumHigh:$("sumHigh"), sumClean:$("sumClean"), sumMeta:$("sumMeta"),
+  actionbar:$("actionbar"), selCount:$("selCount"), fixBtn:$("fixBtn"),
+  modalBg:$("modalBg"), modalList:$("modalList"), mCount:$("mCount"), mRepos:$("mRepos"),
+  confirmType:$("confirmType"), confirmBtn:$("confirmBtn"), cancelBtn:$("cancelBtn"),
+  whoami:$("whoami"), rlGh:$("rl-gh"), rlSnyk:$("rl-snyk")
+};
+$("teamLbl").textContent=TEAM_SLUG;
+$("orgLbl").textContent=ORG_NAME;
+$("snykOrgLbl").textContent=SNYK_ORG_ID.slice(0,8)+"…";
+
+// ---------- helpers ----------
+function log(msg,cls){ els.log.style.display="block"; const d=document.createElement("div"); d.className="l"+(cls?" "+cls:""); d.textContent=msg; els.log.appendChild(d); els.log.scrollTop=els.log.scrollHeight; }
+function banner(msg,type){ els.banner.textContent=msg; els.banner.className="banner show "+(type||"info"); }
+function clearBanner(){ els.banner.className="banner"; }
+function esc(s){ return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function csvCell(v){ v=String(v==null?"":v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }
+function vid(v){ return btoa(unescape(encodeURIComponent(v.repo+"|"+v.projectId+"|"+v.id+"|"+v.pkg))).replace(/=/g,""); }
+
+async function gh(path,opts={}){
+  const res=await fetch(GH_API+path,{...opts,headers:{
+    "Authorization":"Bearer "+PAT,"Accept":"application/vnd.github+json",
+    "X-GitHub-Api-Version":"2022-11-28",...(opts.headers||{})}});
+  const rem=res.headers.get("x-ratelimit-remaining");
+  if(rem!==null) els.rlGh.textContent=rem;
+  return res;
+}
+async function snyk(path,opts={}){
+  const res=await fetch(SNYK_API+path,{...opts,headers:{
+    "Authorization":"token "+SNYK,"Content-Type":"application/json",...(opts.headers||{})}});
+  return res;
+}
+async function runPool(items,limit,worker){
+  const q=items.slice();
+  await Promise.all(Array.from({length:Math.min(limit,q.length)},async()=>{
+    while(q.length){ const it=q.shift(); try{ await worker(it); }catch(_){} }
+  }));
+}
+
+// ---------- mapping: Snyk project name -> owner/repo + manifest ----------
+// SCM-imported Snyk projects are named "owner/repo:path/to/manifest"
+function parseProjectName(name){
+  const i=name.indexOf(":");
+  if(i===-1) return {repoFull:name, manifest:null};
+  return {repoFull:name.slice(0,i), manifest:name.slice(i+1)};
+}
+
+// ---------- load flow ----------
+async function loadAll(){
+  if(BUSY) return;
+  clearBanner(); els.log.innerHTML=""; els.log.style.display="none";
+  PAT=els.pat.value.trim(); SNYK=els.snyk.value.trim();
+  if(!PAT){ banner("Enter your GitHub PAT first.","error"); return; }
+  if(!SNYK){ banner("Enter your Snyk API token first.","error"); return; }
+
+  BUSY=true; els.loadBtn.disabled=true;
+  els.loadBtn.innerHTML='<span class="spin"></span> Loading…';
+  els.results.style.display="none"; els.results.innerHTML="";
+  els.summary.classList.remove("show"); els.actionbar.style.display="none";
+  REPOS=[]; VULNS=[];
+
+  try{
+    // 1) identity + team repos (GitHub)
+    const ur=await gh("/user");
+    if(ur.status===401) throw {msg:"GitHub token rejected (401)."};
+    ME.login=(await ur.json()).login;
+    els.whoami.textContent="@"+ME.login;
+
+    const tr=await gh(`/orgs/${ORG_NAME}/teams/${TEAM_SLUG}/repos?per_page=100`);
+    if(tr.status===404) throw {msg:`Team “${TEAM_SLUG}” not found in ${ORG_NAME} — or the PAT lacks read:org.`};
+    if(tr.status===403) throw {msg:"GitHub 403 — the PAT lacks read:org for team listing."};
+    if(!tr.ok) throw {msg:"GitHub team repos failed ("+tr.status+")."};
+    (await tr.json()).forEach(r=>REPOS.push({full:r.full_name, name:r.name, defaultBranch:r.default_branch}));
+    log("Team "+TEAM_SLUG+": "+REPOS.length+" repo(s).","ok");
+    if(!REPOS.length) throw {msg:"The team has no repos to scan."};
+
+    // 2) Snyk projects for the org (v1 — stable, includes name/origin)
+    const pr=await snyk(`/v1/org/${SNYK_ORG_ID}/projects`,{method:"POST",body:JSON.stringify({})});
+    if(pr.status===401) throw {msg:"Snyk token rejected (401)."};
+    if(pr.status===404) throw {msg:"Snyk org not found — check SNYK_ORG_ID in the constants."};
+    if(!pr.ok) throw {msg:"Snyk projects failed ("+pr.status+")."};
+    const projects=((await pr.json()).projects||[]).filter(p=>{
+      const {repoFull}=parseProjectName(p.name||"");
+      return REPOS.some(r=>r.full.toLowerCase()===repoFull.toLowerCase());
+    });
+    els.rlSnyk.textContent="connected";
+    log("Snyk: "+projects.length+" project(s) map to team repos.","ok");
+
+    // 3) open high/critical issues per project (v1 aggregated — includes fixedIn)
+    await runPool(projects,4,async p=>{
+      const {repoFull,manifest}=parseProjectName(p.name);
+      const ir=await snyk(`/v1/org/${SNYK_ORG_ID}/project/${p.id}/aggregated-issues`,{
+        method:"POST",
+        body:JSON.stringify({includeDescription:false,
+          filters:{severities:SEVERITIES,types:["vuln"],ignored:false,patched:false}})
+      });
+      if(!ir.ok){ log("✗ issues failed for "+p.name+" ("+ir.status+")","err"); return; }
+      ((await ir.json()).issues||[]).forEach(is=>{
+        const d=is.issueData||{};
+        VULNS.push({
+          repo:repoFull, projectId:p.id, projectName:p.name, manifest,
+          id:is.id||d.id, title:d.title||"", severity:(d.severity||"").toLowerCase(),
+          cve:(d.identifiers&&d.identifiers.CVE&&d.identifiers.CVE[0])||"",
+          pkg:is.pkgName||"", from:(is.pkgVersions&&is.pkgVersions[0])||"",
+          fixedIn:(is.fixInfo&&is.fixInfo.fixedIn&&is.fixInfo.fixedIn[0])||"",
+          maturity:(d.exploitMaturity||"").replace(/-/g," "),
+          fixable:!!(is.fixInfo&&(is.fixInfo.isFixable||is.fixInfo.isUpgradable||(is.fixInfo.fixedIn&&is.fixInfo.fixedIn.length)))
+        });
+      });
+    });
+    log(VULNS.length+" open high/critical vulnerabilit(ies) found.",VULNS.length?"warn":"ok");
+    render();
+  }catch(e){
+    banner(e.msg||"Load failed — see log.","error");
+  }
+  BUSY=false; els.loadBtn.disabled=false; els.loadBtn.innerHTML="▸ Load vulnerabilities";
+}
+
+// ---------- render ----------
+function render(){
+  els.results.innerHTML="";
+  const byRepo=new Map(REPOS.map(r=>[r.full.toLowerCase(),{repo:r,vulns:[]}]));
+  VULNS.forEach(v=>{ const e=byRepo.get(v.repo.toLowerCase()); if(e) e.vulns.push(v); });
+
+  const crit=VULNS.filter(v=>v.severity==="critical").length;
+  const high=VULNS.filter(v=>v.severity==="high").length;
+  const clean=[...byRepo.values()].filter(e=>!e.vulns.length).length;
+  els.sumTotal.firstChild.textContent=VULNS.length;
+  els.sumCrit.textContent="critical × "+crit;
+  els.sumHigh.textContent="high × "+high;
+  els.sumClean.textContent="clean repos × "+clean;
+  els.sumMeta.innerHTML="team: "+esc(TEAM_SLUG)+" · repos: "+REPOS.length+
+    "<br>scanned: "+new Date().toISOString().slice(0,16).replace("T"," ")+
+    "<br>severities: critical, high · open only";
+  els.summary.classList.add("show");
+
+  // expand/collapse all
+  const bar=document.createElement("div"); bar.className="clps-bar";
+  bar.innerHTML='<button type="button" data-all="1">⊞ Expand all</button><button type="button" data-all="0">⊟ Collapse all</button>';
+  bar.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
+    els.results.querySelectorAll(".repo-block").forEach(bl=>bl.classList.toggle("open",b.dataset.all==="1"));
+  }));
+  els.results.appendChild(bar);
+
+  // vulnerable repos first, worst first
+  const entries=[...byRepo.values()].sort((a,b)=>{
+    const ac=a.vulns.filter(v=>v.severity==="critical").length, bc=b.vulns.filter(v=>v.severity==="critical").length;
+    if(bc!==ac) return bc-ac;
+    return b.vulns.length-a.vulns.length;
+  });
+
+  entries.forEach(({repo,vulns})=>{
+    const critN=vulns.filter(v=>v.severity==="critical").length;
+    const highN=vulns.filter(v=>v.severity==="high").length;
+    const block=document.createElement("div");
+    block.className="repo-block"+(vulns.length?" open":"");
+    const head=document.createElement("div");
+    head.className="repo-head"; head.setAttribute("role","button"); head.setAttribute("tabindex","0");
+    head.innerHTML=`
+      <div class="repo-name"><span class="chev">▸</span><span class="owner">${esc(repo.full.split("/")[0])}/</span>${esc(repo.name)}</div>
+      <div class="repo-meta">
+        <span class="chip def">default: ${esc(repo.defaultBranch)}</span>
+        ${vulns.length
+          ? (critN?'<span class="chip critical">critical × '+critN+'</span>':"")+
+            (highN?'<span class="chip high">high × '+highN+'</span>':"")
+          : '<span class="chip clean">✓ clean</span>'}
+      </div>`;
+    head.addEventListener("click",()=>block.classList.toggle("open"));
+    head.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); block.classList.toggle("open"); }});
+    block.appendChild(head);
+
+    const body=document.createElement("div"); body.className="repo-body";
+    if(!vulns.length){
+      const e=document.createElement("div"); e.className="empty-repo";
+      e.textContent="No open high/critical issues in Snyk for this repo. ✨";
+      body.appendChild(e);
+    }else{
+      const scroll=document.createElement("div"); scroll.className="tbl-scroll";
+      const tbl=document.createElement("table");
+      tbl.innerHTML=`<thead><tr><th style="width:34px"></th><th>Severity</th><th>Vulnerability</th><th>Package</th><th>Current → fixed in</th><th>Exploit maturity</th><th>Status</th></tr></thead>`;
+      const tb=document.createElement("tbody");
+      vulns.sort((a,b)=>(a.severity==="critical"?0:1)-(b.severity==="critical"?0:1));
+      vulns.forEach(v=>{
+        const id=vid(v);
+        const tr=document.createElement("tr");
+        tr.innerHTML=`
+          <td><input type="checkbox" data-vid="${id}" ${v.fixable?"checked":"disabled"}></td>
+          <td><span class="sev ${esc(v.severity)}">${esc(v.severity.toUpperCase())}</span></td>
+          <td><div>${esc(v.title)}</div><div class="mat">${esc(v.id)}${v.cve?" · "+esc(v.cve):""} · ${esc(v.manifest||"")}</div></td>
+          <td class="pkg">${esc(v.pkg)}</td>
+          <td class="ver">${esc(v.from||"?")} <span class="to">→ ${esc(v.fixedIn||"no fix available")}</span></td>
+          <td class="mat">${esc(v.maturity||"—")}</td>
+          <td class="b-status" data-status="${id}">${v.fixable?"":"not auto-fixable"}</td>`;
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(tb); scroll.appendChild(tbl); body.appendChild(scroll);
+    }
+    block.appendChild(body);
+    els.results.appendChild(block);
+  });
+
+  els.results.style.display="block";
+  els.results.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.addEventListener("change",updateSel));
+  banner(VULNS.length?VULNS.length+" open high/critical issue(s) across "+entries.filter(e=>e.vulns.length).length+" repo(s). Fixable ones are pre-selected."
+                     :"No open high/critical issues for this team. ✨", VULNS.length?"error":"info");
+  updateSel();
+}
+
+// ---------- selection ----------
+function selected(){
+  const out=[];
+  els.results.querySelectorAll('input[type=checkbox]:checked:not(:disabled)').forEach(cb=>{
+    const v=VULNS.find(x=>vid(x)===cb.dataset.vid);
+    if(v && v.fixable) out.push(v);
+  });
+  return out;
+}
+function updateSel(){
+  const n=selected().length;
+  els.selCount.textContent=n;
+  els.fixBtn.disabled=n===0||BUSY;
+  els.actionbar.style.display=n>0?"block":"none";
+}
+
+// ---------- fix flow ----------
+function openModal(){
+  const sel=selected();
+  if(!sel.length) return;
+  const byRepo={};
+  sel.forEach(v=>{ (byRepo[v.repo] ||= []).push(v); });
+  els.mCount.textContent=sel.length;
+  els.mRepos.textContent=Object.keys(byRepo).length;
+  els.modalList.innerHTML="";
+  Object.entries(byRepo).forEach(([repo,vs])=>{
+    const h=document.createElement("div"); h.className="mrepo"; h.textContent=repo+" · "+vs.length;
+    els.modalList.appendChild(h);
+    vs.forEach(v=>{
+      const d=document.createElement("div"); d.className="mb";
+      d.textContent="["+v.severity+"] "+v.pkg+" "+(v.from||"?")+" → "+v.fixedIn;
+      els.modalList.appendChild(d);
+    });
+  });
+  els.confirmType.value=""; els.confirmBtn.disabled=true;
+  els.modalBg.style.display="flex"; els.confirmType.focus();
+}
+function closeModal(){ els.modalBg.style.display="none"; }
+
+// Primary path: attempt Snyk's fix-PR trigger. NOTE: this endpoint is not part
+// of Snyk's broadly documented public API; availability varies by plan and SCM
+// integration. Any non-2xx response falls back to the manifest-bump path.
+async function trySnykFixPR(projectId, issueIds){
+  try{
+    const res=await snyk(`/v1/org/${SNYK_ORG_ID}/project/${projectId}/fix-pr`,{
+      method:"POST", body:JSON.stringify({issues:issueIds})});
+    if(res.ok){
+      const j=await res.json().catch(()=>({}));
+      return {ok:true, url:j.pullRequestUrl||j.url||null};
+    }
+  }catch(_){}
+  return {ok:false};
+}
+
+// Fallback: bump the manifest line to fixedIn on a new branch, open a PR.
+function bumpManifest(content, pkg, fromVer, toVer, manifestPath){
+  const p=manifestPath||"";
+  if(/package\.json$/.test(p)){
+    // "pkg": "<anything current>"  ->  "pkg": "toVer"
+    const re=new RegExp('("'+pkg.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+'"\\s*:\\s*")[^"]+(")');
+    if(re.test(content)) return content.replace(re, "$1"+toVer+"$2");
+    return null;
+  }
+  // requirements.txt style: pkg==fromVer (also handles >=, ~=)
+  const re=new RegExp("^("+pkg.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+")\\s*[=~><!]=+\\s*[^\\s#]+","mi");
+  if(re.test(content)) return content.replace(re, "$1=="+toVer);
+  return null;
+}
+
+async function ghFixPR(repoFull, defaultBranch, vulns){
+  const [owner,repo]=repoFull.split("/");
+  const branch="snyk-fix/"+new Date().toISOString().slice(0,10)+"-"+Math.random().toString(36).slice(2,7);
+  // base sha
+  const rr=await gh(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(defaultBranch)}`);
+  if(!rr.ok) return {ok:false,msg:"base ref "+rr.status};
+  const baseSha=(await rr.json()).object.sha;
+  const br=await gh(`/repos/${owner}/${repo}/git/refs`,{method:"POST",
+    body:JSON.stringify({ref:"refs/heads/"+branch, sha:baseSha})});
+  if(!br.ok) return {ok:false,msg:"branch create "+br.status};
+
+  let bumped=0;
+  for(const v of vulns){
+    if(!v.manifest||!v.fixedIn) continue;
+    const fr=await gh(`/repos/${owner}/${repo}/contents/${v.manifest}?ref=${encodeURIComponent(branch)}`);
+    if(!fr.ok) continue;
+    const fj=await fr.json();
+    const text=decodeURIComponent(escape(atob(String(fj.content).replace(/\s/g,""))));
+    const next=bumpManifest(text, v.pkg, v.from, v.fixedIn, v.manifest);
+    if(next===null||next===text) continue;
+    const put=await gh(`/repos/${owner}/${repo}/contents/${v.manifest}`,{method:"PUT",
+      body:JSON.stringify({
+        message:"fix: bump "+v.pkg+" to "+v.fixedIn+" ("+(v.cve||v.id)+")",
+        content:btoa(unescape(encodeURIComponent(next))),
+        sha:fj.sha, branch})});
+    if(put.ok) bumped++;
+  }
+  if(!bumped){
+    await gh(`/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`,{method:"DELETE"});
+    return {ok:false,msg:"no manifest lines matched — manual fix needed"};
+  }
+  const body="Automated security fix PR (manifest bump — lockfile may need CI regeneration).\n\n"+
+    vulns.map(v=>"- **"+v.severity+"** "+v.pkg+" "+(v.from||"?")+" → "+v.fixedIn+" ("+(v.cve||v.id)+")").join("\n")+
+    "\n\nGenerated by the Snyk Vulnerability Dashboard. Review and run CI before merging.";
+  const pr=await gh(`/repos/${owner}/${repo}/pulls`,{method:"POST",
+    body:JSON.stringify({title:"security: fix "+vulns.length+" high/critical vulnerabilit"+(vulns.length>1?"ies":"y"),
+      head:branch, base:defaultBranch, body})});
+  if(!pr.ok) return {ok:false,msg:"PR create "+pr.status};
+  const pj=await pr.json();
+  return {ok:true,url:pj.html_url,fallback:true,bumped};
+}
+
+async function runFix(){
+  const sel=selected();
+  if(!sel.length){ closeModal(); return; }
+  BUSY=true; closeModal();
+  els.fixBtn.disabled=true; els.loadBtn.disabled=true;
+  const byRepo={};
+  sel.forEach(v=>{ (byRepo[v.repo] ||= []).push(v); });
+  banner("Creating fix PRs for "+Object.keys(byRepo).length+" repo(s)…","info");
+  let ok=0, fail=0;
+
+  for(const [repoFull,vulns] of Object.entries(byRepo)){
+    vulns.forEach(v=>mark(vid(v),"pending",'<span class="spin"></span> working'));
+    const rec=REPOS.find(r=>r.full.toLowerCase()===repoFull.toLowerCase());
+    // group by Snyk project for the primary attempt
+    const byProject={};
+    vulns.forEach(v=>{ (byProject[v.projectId] ||= []).push(v); });
+    let done=false, url=null, fallback=false;
+    for(const [pid,pvs] of Object.entries(byProject)){
+      const s=await trySnykFixPR(pid, pvs.map(v=>v.id));
+      if(s.ok){ done=true; url=s.url; }
+      else break; // primary unavailable → single fallback PR for the whole repo
+    }
+    if(!done){
+      const r=await ghFixPR(repoFull, rec?rec.defaultBranch:"master", vulns);
+      done=r.ok; url=r.url; fallback=true;
+      if(!r.ok){ vulns.forEach(v=>mark(vid(v),"err","✗ "+r.msg)); fail+=vulns.length; continue; }
+    }
+    ok+=vulns.length;
+    const label=(fallback?"✓ PR (manifest bump)":"✓ Snyk fix PR");
+    vulns.forEach(v=>mark(vid(v),"ok", url?('<a href="'+esc(url)+'" target="_blank" rel="noopener">'+label+"</a>"):label));
+  }
+  BUSY=false; els.loadBtn.disabled=false;
+  banner("Done · "+ok+" fix(es) in PRs"+(fail?(" · "+fail+" failed"):"")+". PRs await review — nothing was merged.", fail?"error":"info");
+  updateSel();
+}
+function mark(id,cls,html){ const c=document.querySelector('[data-status="'+id+'"]'); if(c){ c.className="b-status "+cls; c.innerHTML=html; } }
+
+// ---------- CSV ----------
+function exportCsv(){
+  if(!VULNS.length){ banner("Load vulnerabilities first.","error"); return; }
+  const rows=[["repo","severity","id","cve","title","package","current","fixed_in","exploit_maturity","manifest","fixable"]];
+  VULNS.forEach(v=>rows.push([v.repo,v.severity,v.id,v.cve,v.title,v.pkg,v.from,v.fixedIn,v.maturity,v.manifest||"",v.fixable?"yes":"no"]));
+  const csv=rows.map(r=>r.map(csvCell).join(",")).join("\n");
+  const blob=new Blob([csv],{type:"text/csv"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download="snyk-high-critical.csv";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+
+// ---------- wiring ----------
+els.loadBtn.addEventListener("click",loadAll);
+els.csvBtn.addEventListener("click",exportCsv);
+els.resetBtn.addEventListener("click",()=>{
+  PAT=""; SNYK=""; REPOS=[]; VULNS=[];
+  els.pat.value=""; els.snyk.value="";
+  els.results.style.display="none"; els.results.innerHTML="";
+  els.summary.classList.remove("show"); els.actionbar.style.display="none";
+  clearBanner(); els.log.innerHTML=""; els.log.style.display="none";
+  els.whoami.textContent="—"; els.rlGh.textContent="—"; els.rlSnyk.textContent="—";
+});
+els.fixBtn.addEventListener("click",openModal);
+els.cancelBtn.addEventListener("click",closeModal);
+els.modalBg.addEventListener("click",e=>{ if(e.target===els.modalBg) closeModal(); });
+els.confirmType.addEventListener("input",()=>{ els.confirmBtn.disabled=els.confirmType.value!=="CONFIRM"; });
+els.confirmBtn.addEventListener("click",runFix);
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&els.modalBg.style.display==="flex") closeModal(); });
+</script>
+</body>
+</html>
